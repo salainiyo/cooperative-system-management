@@ -1,12 +1,13 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError
+from fastapi.security import OAuth2PasswordRequestForm
 
 from db.database import get_session
 from models.users import User, UserCreate, UserRead
 from core.rate_limiting import limiter
 from core.app_logging import logger
-from dependancies.auth import create_password_hash
+from dependancies.auth import create_password_hash, verify_password_hash, create_access_token, create_refresh_token
 
 user_router = APIRouter()
 
@@ -53,3 +54,21 @@ async def user_registration(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
         )
+        
+@user_router.post("/login")
+async def login(form_data: OAuth2PasswordRequestForm = Depends(),
+                session: Session= Depends(get_session)):
+    statement = select(User).where(User.email == form_data.username)
+    db_user = session.exec(statement).first()
+    if not db_user or not verify_password_hash(db_user.hashed_password, form_data.password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Invalid credentials",
+                            headers={"WWW-Authenticate": "Bearer"})
+        
+    access_token = create_access_token(db_user.id)#type: ignore
+    refresh_token = create_refresh_token(db_user.id)#type: ignore
+    return {
+        "access_token":access_token,
+        "refresh_token":refresh_token,
+        "token_type": "bearer"
+    }
