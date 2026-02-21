@@ -33,3 +33,11 @@ class UserRead(UserBase):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    
+class TokenBlocklist(SQLModel, table=True):
+    id: int|None = Field(default=None, primary_key=True)
+    token: str = Field(index=True)
+    token_type: str
+    
+class LogoutRequest(SQLModel):
+    token: str

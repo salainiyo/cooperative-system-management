@@ -9,10 +9,10 @@ from dependancies.dependancies import utc_now
 
 load_dotenv()
 SECRET_KEY = check_none_env_variable(os.getenv("SECRET_KEY"))
-ALGORITHM = check_none_env_variable(os.getenv("ALORITHM"))
+ALGORITHM = check_none_env_variable(os.getenv("ALGORITHM"))
 EXPIRATION_TIME_MINUTES = int(check_none_env_variable(os.getenv("EXPIRATION_TIME_MINUTES")))
 EXPIRATION_TIME_DAYS = int(check_none_env_variable(os.getenv("EXPIRATION_TIME_DAYS")))
-ALGORITHM = check_none_env_variable(os.getenv(ALGORITHM))
+ALGORITHM = check_none_env_variable(os.getenv("ALGORITHM"))
 
 password_hash = PasswordHash.recommended()
 
@@ -41,3 +41,4 @@ def create_refresh_token(user_id: int):
         expire_delta=timedelta(days=EXPIRATION_TIME_DAYS),
         token_type="refresh"
     )
+    
