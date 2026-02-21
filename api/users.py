@@ -1,14 +1,17 @@
+import jwt
 from fastapi import APIRouter, HTTPException, Depends, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlmodel import Session, select
 from sqlalchemy.exc import IntegrityError
 from fastapi.security import OAuth2PasswordRequestForm
+from jwt.exceptions import InvalidTokenError
 
 from db.database import get_session
-from models.users import User, UserCreate, UserRead, TokenBlocklist, LogoutRequest
+from models.users import User, UserCreate, UserRead, TokenBlocklist, LogoutRequest, TokenResponse
 from core.rate_limiting import limiter
 from core.app_logging import logger
 from dependancies.auth import create_password_hash, verify_password_hash, create_access_token, create_refresh_token
+from dependancies.auth import SECRET_KEY, ALGORITHM
 
 user_router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer("/login")
@@ -58,6 +61,7 @@ async def user_registration(
         )
         
 @user_router.post("/login")
+@limiter.limit("3/minute")
 async def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     session: Session = Depends(get_session)
@@ -116,3 +120,51 @@ async def logout(token_data: LogoutRequest,
         session.rollback()
         logger.error(f"Logout failed: {str(e)}")
         raise HTTPException(status_code=500, detail="Could not log out")
+    
+@user_router.post("/refresh", response_model=TokenResponse)
+async def refresh_access_token(
+    token_data: LogoutRequest, 
+    session: Session = Depends(get_session)
+):
+    auth_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired refresh token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    is_blocked = session.exec(
+        select(TokenBlocklist).where(TokenBlocklist.token == token_data.token)
+    ).first()
+    if is_blocked:
+        logger.warning(f"Refresh attempt with blacklisted token: {token_data.token[:10]}...")
+        raise auth_exception
+
+    try:
+        payload = jwt.decode(token_data.token, key=SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("sub")
+        token_type = payload.get("type")
+
+        if user_id is None or token_type != "refresh":
+            raise auth_exception
+
+    except InvalidTokenError:
+        raise auth_exception
+    
+    old_refresh_block = TokenBlocklist(token=token_data.token, token_type="refresh")
+    session.add(old_refresh_block)
+
+    new_access_token = create_access_token(int(user_id))
+    new_refresh_token = create_refresh_token(int(user_id))
+
+    try:
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Failed to rotate tokens: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    return {
+        "access_token": new_access_token,
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer"
+    }

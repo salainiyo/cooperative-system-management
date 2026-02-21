@@ -38,6 +38,12 @@ class TokenBlocklist(SQLModel, table=True):
     id: int|None = Field(default=None, primary_key=True)
     token: str = Field(index=True)
     token_type: str
+    blocked_at: datetime= Field(default_factory=utc_now)
     
 class LogoutRequest(SQLModel):
     token: str
+    
+class TokenResponse(SQLModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
