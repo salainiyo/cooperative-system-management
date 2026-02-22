@@ -58,7 +58,7 @@ def create_refresh_token(user_id: int):
     )
 
 
-def get_current_user(
+def current_user(
     token: str = Depends(oauth2_scheme), session: Session = Depends(get_session)
 ):
     auth_exception = HTTPException(
