@@ -14,4 +14,4 @@ engine = create_engine(database_url, connect_args=connect_args)
 
 def get_session():
     with Session(engine) as session:
-        return session
+        yield session

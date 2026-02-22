@@ -10,7 +10,6 @@ from dependancies.dependancies import utc_now
 
 # 1. PAYMENT MODELS
 
-
 class BasePayments(SQLModel):
     # Split buckets for the 1.5% declining balance interest
     principal_amount: Decimal = Field(
@@ -46,7 +45,6 @@ class PublicPayments(BasePayments):
 
 
 # 2. LOAN MODELS
-
 
 class BaseLoan(SQLModel):
     amount: Decimal = Field(max_digits=12, decimal_places=2)
@@ -133,6 +131,10 @@ class CreateLoan(BaseLoan):
 class PublicLoan(BaseLoan):
     id: int
     member_id: int
+    # 👇 Exposed properties for the frontend
+    remaining_balance: Decimal | None = Decimal("0.00")
+    current_interest_due: Decimal | None = Decimal("0.00")
+    accumulated_late_fees: Decimal | None = Decimal("0.00")
 
 
 class LoanWithPayments(BaseLoan):
@@ -141,10 +143,15 @@ class LoanWithPayments(BaseLoan):
     approved_at: datetime
     status: str
     payments: List[PublicPayments] = []
+    
+    # 👇 Exposed properties for the Profile Dashboard math
+    remaining_balance: Decimal | None = Decimal("0.00")
+    current_interest_due: Decimal | None = Decimal("0.00")
+    accumulated_late_fees: Decimal | None = Decimal("0.00")
+    next_due_date: Optional[date] = None
 
 
 # 3. MEMBER MODELS
-
 
 class MemberBase(SQLModel):
     first_name: str = Field(index=True)

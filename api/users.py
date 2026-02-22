@@ -26,7 +26,7 @@ from models.users import (
     UserRead,
 )
 
-user_router = APIRouter()
+user_router = APIRouter(prefix="/auth")
 oauth2_scheme = OAuth2PasswordBearer("/login")
 
 

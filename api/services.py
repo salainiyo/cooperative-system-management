@@ -247,6 +247,19 @@ def register_payment(
         raise HTTPException(
             status_code=500, detail="Internal server error during payment"
         )
+        
+@payment_router.get("/", response_model=list[PublicPayments])
+@limiter.limit("10/minute")
+def get_all_payments(
+    request: Request,
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required),
+):
+    logger.info(f"Admin {admin.email} requested the payments log.")
+    # Fetch all payments, ordering by the newest first
+    statement = select(Payments).order_by(col(Payments.id).desc())
+    results = session.exec(statement).all()
+    return results
 
 
 @admin_router.get("/dashboard-stats", response_model=AdminDashboardStats)
