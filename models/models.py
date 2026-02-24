@@ -131,7 +131,6 @@ class CreateLoan(BaseLoan):
 class PublicLoan(BaseLoan):
     id: int
     member_id: int
-    # 👇 Exposed properties for the frontend
     remaining_balance: Decimal | None = Decimal("0.00")
     current_interest_due: Decimal | None = Decimal("0.00")
     accumulated_late_fees: Decimal | None = Decimal("0.00")
@@ -144,12 +143,31 @@ class LoanWithPayments(BaseLoan):
     status: str
     payments: List[PublicPayments] = []
     
-    # 👇 Exposed properties for the Profile Dashboard math
     remaining_balance: Decimal | None = Decimal("0.00")
     current_interest_due: Decimal | None = Decimal("0.00")
     accumulated_late_fees: Decimal | None = Decimal("0.00")
     next_due_date: Optional[date] = None
 
+
+#Savings models
+class MemberSaving(SQLModel):
+    amount: Decimal
+    
+class Savings(MemberSaving, table=True):
+    id : int|None = Field(default=None, primary_key=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now, sa_column_kwargs={"onupdate":utc_now})
+    member_id: int|None = Field(default=None, foreign_key="member.id")
+    member: Optional["Member"] = Relationship(back_populates="savings", cascade_delete=True)
+    
+class SavingsRead(MemberSaving):
+    id : int
+    amount: Decimal
+    created_at: datetime
+    updated_at: datetime
+    
+class SavingsUpdate(SQLModel):
+    amount: int|None = None
 
 # 3. MEMBER MODELS
 
@@ -159,7 +177,6 @@ class MemberBase(SQLModel):
     date_of_birth: date = Field()
     gender: str = Field()
     phone_number: str = Field(max_length=15, index=True, unique=True)
-    savings: Decimal = Field(default=Decimal("0.00"), max_digits=12, decimal_places=2)
 
 
 class MemberCreate(MemberBase):
@@ -175,17 +192,34 @@ class Member(MemberBase, table=True):
 
     # Relationships
     loans: List["Loan"] = Relationship(back_populates="member")
+    savings: List["Savings"] = Relationship(back_populates="member")
+    
+    @property
+    def total_savings(self):
+        return sum((s.amount for s in self.savings), Decimal("0.00"))
 
 
 class MemberPublic(MemberBase):
     id: int
     created_at: datetime
     updated_at: datetime
+    
+class MemberUpdate(SQLModel):
+    first_name: str|None = None
+    last_name: str|None = None
+    date_of_birth: date|None = None
+    gender: str|None = None
+    phone_number: str|None = None
 
 
 class MemberDetailed(MemberPublic):
     active_loans: List[LoanWithPayments] = []
     completed_loans: List[LoanWithPayments] = []
+    total_savings: Decimal | None = Decimal("0.00")
+    
+class MemberDeleted(SQLModel):
+    first_name: str
+    last_name: str
 
 
 class AdminDashboardStats(BaseModel):

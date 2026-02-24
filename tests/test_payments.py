@@ -13,7 +13,6 @@ def test_full_loan_lifecycle(client, admin_token):
         "phone_number": "+123456789",
         "savings": "500.00",
     }
-    # Changed to /member/
     response = client.post("/member/", json=member_data, headers=headers)
     assert response.status_code == 201, f"Failed to create member: {response.text}"
     member_id = response.json()["id"]
@@ -24,14 +23,12 @@ def test_full_loan_lifecycle(client, admin_token):
         "payable_at": "2024-12-31",
         "monthly_payment": "100.00",
     }
-    # Changed to /loan/
     response = client.post(f"/loan/{member_id}", json=loan_data, headers=headers)
     assert response.status_code == 201, f"Failed to create loan: {response.text}"
     loan_id = response.json()["id"]
 
     # --- STEP 3: MAKE A PAYMENT ---
     payment_data = {"amount": "100.00"}
-    # Changed to /payment/
     response = client.post(f"/payment/{loan_id}", json=payment_data, headers=headers)
 
     assert response.status_code == 201, f"Failed to create payment: {response.text}"

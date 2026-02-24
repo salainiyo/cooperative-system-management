@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, col, func, or_, select
@@ -17,10 +17,16 @@ from models.models import (
     Member,
     MemberCreate,
     MemberDetailed,
+    MemberUpdate,
+    MemberDeleted,
     MemberPublic,
     Payments,
     PublicLoan,
     PublicPayments,
+    Savings,
+    MemberSaving,
+    SavingsRead,
+    SavingsUpdate
 )
 from models.users import User
 
@@ -28,6 +34,7 @@ member_router = APIRouter(prefix="/member")
 loan_router = APIRouter(prefix="/loan")
 payment_router = APIRouter(prefix="/payment")
 admin_router = APIRouter(prefix="/admin", tags=["Admin Dashboard"])
+savings_router = APIRouter(prefix="/savings")
 
 
 # ==========================================
@@ -123,6 +130,247 @@ def get_member_detailed(
     return MemberDetailed.model_validate(
         member, update={"active_loans": active, "completed_loans": completed}
     )
+    
+@member_router.patch("/update/{member_id}", response_model=MemberPublic, status_code=status.HTTP_200_OK)
+@limiter.limit("3/minute")
+async def update_member(
+    request: Request,
+    member_id: int,
+    member_update_data: MemberUpdate,
+    admin: User = Depends(admin_required),
+    session: Session = Depends(get_session)
+):
+    logger.info(f"Admin {admin.email} is attempting to update Member #{member_id}")
+    
+    # 1. Fetch the existing database object
+    member_db = session.get(Member, member_id)
+    if not member_db:
+        logger.warning(f"Update failed: Member #{member_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found"
+        )
+        
+    # 2. Extract ONLY the fields the user actually provided in the request
+    update_dict = member_update_data.model_dump(exclude_unset=True)
+    
+    # Check if they actually sent anything to update!
+    if not update_dict:
+        logger.info(f"No new data provided for Member #{member_id}. Skipping update.")
+        return member_db
+
+    # 3. Apply the dictionary values to the database object
+    member_db.sqlmodel_update(update_dict)
+    
+    # 4. Save the DATABASE OBJECT (member_db), not the dictionary!
+    try:
+        session.add(member_db)
+        session.commit()
+        session.refresh(member_db)
+        logger.info(f"Successfully updated Member #{member_id}. Fields changed: {list(update_dict.keys())}")
+        return member_db
+        
+    except IntegrityError:
+        session.rollback()
+        logger.error(f"Update failed for Member #{member_id}: Integrity Error (Likely a duplicate phone number)")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Update failed. The provided data (e.g., phone number) may already be in use."
+        )
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Unexpected error while updating Member #{member_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during update."
+        )
+        
+@member_router.delete("/delete/{member_id}", response_model=MemberDeleted, status_code=status.HTTP_200_OK)
+@limiter.limit("3/minute")
+async def delete_member(
+    request: Request, # Required by the limiter!
+    member_id: int,
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required)
+):
+    logger.warning(f"Admin {admin.email} initiated deletion for Member #{member_id}")
+
+    db_member = session.get(Member, member_id)
+    if not db_member:
+        logger.error(f"Deletion failed: Member #{member_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found"
+        )
+    
+    try:
+        session.delete(db_member)
+        session.commit()
+        logger.info(f"Successfully deleted Member #{member_id} ({db_member.first_name} {db_member.last_name}) and all associated records.")
+        return db_member
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Database error during deletion of Member #{member_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during deletion."
+        )
+        
+# ==========================================
+# SAVINGS ROUTES
+# ==========================================
+@savings_router.post("/{member_id}", response_model=SavingsRead, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+async def record_savings(
+    request: Request,
+    member_id: int,
+    savings_data: MemberSaving,
+    admin: User = Depends(admin_required),
+    session: Session = Depends(get_session)
+):
+    logger.info(f"Admin {admin.email} is recording a deposit for Member #{member_id}")
+
+    # 1. Verify the member exists
+    db_member = session.get(Member, member_id)
+    if not db_member:
+        logger.warning(f"Deposit failed: Member #{member_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found"
+        )
+        
+    # 2. Bind the deposit to the member
+    new_savings = Savings.model_validate(savings_data, update={"member_id": member_id})
+    
+    # 3. Save to database safely
+    try:
+        session.add(new_savings)
+        session.commit()
+        session.refresh(new_savings)
+        
+        logger.info(f"Successfully recorded a {new_savings.amount} deposit for Member #{member_id}.")
+        return new_savings
+        
+    except IntegrityError:
+        session.rollback()
+        logger.error(f"Integrity Error recording savings for Member #{member_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database integrity error."
+        )
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Unexpected error recording savings for Member #{member_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during deposit."
+        )
+        
+from fastapi import Query # <-- Add this to your imports!
+
+@savings_router.get("/{member_id}", response_model=list[SavingsRead])
+@limiter.limit("5/minute")
+async def get_members_savings(
+    request: Request,
+    member_id: int,
+    skip: int = Query(default=0, ge=0, description="Number of records to skip"),
+    limit: int = Query(default=10, le=100, description="Max records to return (max 100)"),
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required)
+):
+    logger.info(f"Admin {admin.email} requesting savings for Member #{member_id} (skip={skip}, limit={limit})")
+
+    db_member = session.get(Member, member_id)
+    if not db_member:
+        logger.warning(f"Fetch failed: Member #{member_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Member not found"
+        )
+    
+    try:
+        statement = (
+            select(Savings)
+            .where(Savings.member_id == member_id)
+            .order_by(col(Savings.updated_at).desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        member_savings = session.exec(statement).all()
+        
+        logger.info(f"Successfully retrieved {len(member_savings)} savings records for Member #{member_id}.")
+        return member_savings
+        
+    except Exception as e:
+        logger.error(f"Database error while fetching savings for Member #{member_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while retrieving savings."
+        )
+        
+@savings_router.patch("/{savings_id}", response_model=SavingsRead, status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def update_savings(
+    request: Request, # <-- CRITICAL FIX: Required by the rate limiter
+    savings_id: int,
+    savings_update: SavingsUpdate, # Renamed slightly for clarity
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required)
+):
+    logger.info(f"Admin {admin.email} is attempting to update Savings record #{savings_id}")
+
+    # 1. Verify the savings record exists
+    db_savings = session.get(Savings, savings_id)
+    if not db_savings:
+        logger.warning(f"Update failed: Savings record #{savings_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Savings record not found"
+        )
+    
+    # 2. Extract only the fields provided by the user
+    update_data = savings_update.model_dump(exclude_unset=True)
+    
+    # 3. Check if they actually sent anything to change
+    if not update_data:
+        logger.info(f"No new data provided for Savings record #{savings_id}. Skipping commit.")
+        return db_savings
+
+    try:
+        # 4. Apply changes to the object in memory
+        db_savings.sqlmodel_update(update_data)
+        
+        # 5. CRITICAL FIX: Actually save the changes to the database!
+        session.add(db_savings)
+        session.commit()
+        session.refresh(db_savings)
+        
+        logger.info(f"Successfully updated Savings record #{savings_id}. Fields changed: {list(update_data.keys())}")
+        return db_savings
+    
+    except IntegrityError:
+        session.rollback()
+        logger.error(f"Integrity Error while updating Savings record #{savings_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database integrity error. Verify the provided data."
+        )
+    
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Unexpected error updating Savings record #{savings_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during update."
+        )
+        
+
+
+
+
+
 
 
 # ==========================================
@@ -182,8 +430,7 @@ async def register_loan(
         session.rollback()
         logger.error(f"Failed to issue loan: {str(e)}")
         raise HTTPException(status_code=500, detail="Error while processing loan")
-
-
+    
 # ==========================================
 # PAYMENT ROUTES
 # ==========================================
