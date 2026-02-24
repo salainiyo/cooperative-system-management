@@ -168,6 +168,10 @@ class SavingsRead(MemberSaving):
     
 class SavingsUpdate(SQLModel):
     amount: int|None = None
+    
+class SavingsDelete(SQLModel):
+    member: str
+    amount: Decimal
 
 # 3. MEMBER MODELS
 

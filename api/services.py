@@ -26,7 +26,8 @@ from models.models import (
     Savings,
     MemberSaving,
     SavingsRead,
-    SavingsUpdate
+    SavingsUpdate,
+    SavingsDelete
 )
 from models.users import User
 
@@ -313,15 +314,14 @@ async def get_members_savings(
 @savings_router.patch("/{savings_id}", response_model=SavingsRead, status_code=status.HTTP_200_OK)
 @limiter.limit("5/minute")
 async def update_savings(
-    request: Request, # <-- CRITICAL FIX: Required by the rate limiter
+    request: Request,
     savings_id: int,
-    savings_update: SavingsUpdate, # Renamed slightly for clarity
+    savings_update: SavingsUpdate,
     session: Session = Depends(get_session),
     admin: User = Depends(admin_required)
 ):
     logger.info(f"Admin {admin.email} is attempting to update Savings record #{savings_id}")
 
-    # 1. Verify the savings record exists
     db_savings = session.get(Savings, savings_id)
     if not db_savings:
         logger.warning(f"Update failed: Savings record #{savings_id} not found.")
@@ -330,19 +330,15 @@ async def update_savings(
             detail="Savings record not found"
         )
     
-    # 2. Extract only the fields provided by the user
     update_data = savings_update.model_dump(exclude_unset=True)
     
-    # 3. Check if they actually sent anything to change
     if not update_data:
         logger.info(f"No new data provided for Savings record #{savings_id}. Skipping commit.")
         return db_savings
 
     try:
-        # 4. Apply changes to the object in memory
         db_savings.sqlmodel_update(update_data)
         
-        # 5. CRITICAL FIX: Actually save the changes to the database!
         session.add(db_savings)
         session.commit()
         session.refresh(db_savings)
@@ -366,6 +362,47 @@ async def update_savings(
             detail="Internal server error during update."
         )
         
+@savings_router.delete("/{savings_id}", response_model=SavingsDelete, status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def delete_savings(
+    request: Request,
+    savings_id: int,
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required)
+):
+    logger.warning(f"Admin {admin.email} initiated deletion for Savings record #{savings_id}")
+
+    db_savings = session.get(Savings, savings_id)
+    if not db_savings:
+        logger.error(f"Deletion failed: Savings record #{savings_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Savings record not found"
+        )
+        
+    # (Using a fallback just in case the database relationship is missing)
+    first_name = db_savings.member.first_name if db_savings.member else "Unknown"
+    last_name = db_savings.member.last_name if db_savings.member else "Member"
+    full_name = f"{first_name} {last_name}"
+    
+    amount_deleted = db_savings.amount
+    
+    response_data = SavingsDelete(member=full_name, amount=amount_deleted)
+
+    try:
+        session.delete(db_savings)
+        session.commit()
+        
+        logger.info(f"Successfully deleted {amount_deleted} RWF savings record #{savings_id} for {full_name}.")
+        return response_data
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Database error during deletion of Savings record #{savings_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during deletion."
+        )
 
 
 
