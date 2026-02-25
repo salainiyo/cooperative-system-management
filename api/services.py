@@ -13,6 +13,8 @@ from models.models import (
     AdminDashboardStats,
     CreateLoan,
     CreatePayments,
+    LoanUpdate,
+    LoanDelete,
     Loan,
     Member,
     MemberCreate,
@@ -23,6 +25,8 @@ from models.models import (
     Payments,
     PublicLoan,
     PublicPayments,
+    PaymentUpdate,
+    PaymentDelete,
     Savings,
     MemberSaving,
     SavingsRead,
@@ -268,8 +272,6 @@ async def record_savings(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error during deposit."
         )
-        
-from fastapi import Query # <-- Add this to your imports!
 
 @savings_router.get("/{member_id}", response_model=list[SavingsRead])
 @limiter.limit("5/minute")
@@ -404,12 +406,6 @@ async def delete_savings(
             detail="Internal server error during deletion."
         )
 
-
-
-
-
-
-
 # ==========================================
 # LOAN ROUTES
 # ==========================================
@@ -436,12 +432,12 @@ async def register_loan(
             status_code=400, detail="Member already has an active debt."
         )
 
-    if db_member.savings <= Decimal("0.00"):
+    if db_member.total_savings <= Decimal("0.00"):
         raise HTTPException(
             status_code=400, detail="Member has no savings account balance."
         )
 
-    max_loan_allowed = db_member.savings * Decimal("2.00")
+    max_loan_allowed = db_member.total_savings * Decimal("2.00")
     if loan_data.amount > max_loan_allowed:
         raise HTTPException(
             status_code=400,
@@ -467,6 +463,104 @@ async def register_loan(
         session.rollback()
         logger.error(f"Failed to issue loan: {str(e)}")
         raise HTTPException(status_code=500, detail="Error while processing loan")
+    
+@loan_router.patch("/{loan_id}", response_model=PublicLoan, status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def update_loan(
+    request: Request,
+    loan_id: int,
+    update_loan_data: LoanUpdate,
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required)
+):
+    logger.info(f"Admin {admin.email} is attempting to update Loan #{loan_id}")
+
+    db_loan = session.get(Loan, loan_id)
+    if not db_loan:
+        logger.warning(f"Update failed: Loan #{loan_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Loan not found"
+        )
+        
+    loan_data = update_loan_data.model_dump(exclude_unset=True)
+    
+    if not loan_data:
+        logger.info(f"No new data provided for Loan #{loan_id}. Skipping commit.")
+        return db_loan
+
+    try:
+        db_loan.sqlmodel_update(loan_data)
+        session.add(db_loan)
+        session.commit()
+        session.refresh(db_loan)
+        
+        logger.info(f"Successfully updated Loan #{loan_id}. Fields changed: {list(loan_data.keys())}")
+        return db_loan
+        
+    except IntegrityError:
+        session.rollback()
+        logger.error(f"Integrity Error updating Loan #{loan_id}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Database integrity error. Check if the provided data is valid."
+        )
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Unexpected error updating Loan #{loan_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during loan update."
+        )
+        
+@loan_router.delete("/{loan_id}", response_model=LoanDelete, status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def delete_loan(
+    request: Request,
+    loan_id: int,
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required)
+):
+    logger.warning(f"Admin {admin.email} initiated deletion for Loan #{loan_id}")
+
+    db_loan = session.get(Loan, loan_id)
+    if not db_loan:
+        logger.error(f"Deletion failed: Loan #{loan_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Loan not found"
+        )
+        
+    first_name = db_loan.member.first_name if db_loan.member else "Unknown"
+    last_name = db_loan.member.last_name if db_loan.member else "Member"
+    full_name = f"{first_name} {last_name}"
+    
+    payments_made = len(db_loan.payments) if db_loan.payments else 0
+    loan_amount = db_loan.amount
+    remaining_balance = db_loan.remaining_balance
+    
+    loan_to_be_deleted = LoanDelete(
+        member=full_name,
+        amount=loan_amount,
+        payment_times=payments_made,
+        remaining_amount=remaining_balance
+    )
+    
+    try:
+        session.delete(db_loan)
+        session.commit()
+        
+        logger.info(f"Successfully deleted Loan #{loan_id} ({loan_amount} RWF) for {full_name}.")
+        return loan_to_be_deleted
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Database error during deletion of Loan #{loan_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during loan deletion."
+        )
     
 # ==========================================
 # PAYMENT ROUTES
@@ -503,12 +597,27 @@ def register_payment(
             detail=f"Overpayment! Total to clear the loan (including fees/interest) is {total_clearance_amount}.",
         )
 
-    # Split Logic: Pay interest first, rest goes to principal
-    interest_paid = min(payment_data.amount, interest_due)
-    principal_paid = payment_data.amount - interest_paid
+    # --- THE WATERFALL PAYMENT LOGIC ---
+    current_cash = payment_data.amount
+
+    # 1. Pay off late fees first
+    late_fees_due = db_loan.accumulated_late_fees
+    late_fees_paid = min(current_cash, late_fees_due)
+    current_cash -= late_fees_paid
+
+    # 2. Pay off interest second
+    interest_due = db_loan.current_interest_due
+    interest_paid = min(current_cash, interest_due)
+    current_cash -= interest_paid
+
+    # 3. Whatever is left goes to the principal
+    principal_paid = current_cash
 
     new_payment = Payments(
-        loan_id=loan_id, principal_amount=principal_paid, interest_amount=interest_paid
+        loan_id=loan_id, 
+        principal_amount=principal_paid, 
+        interest_amount=interest_paid,
+        late_fee_amount=late_fees_paid
     )
     session.add(new_payment)
 
@@ -516,7 +625,7 @@ def register_payment(
     if (db_loan.remaining_balance - principal_paid) <= Decimal("0.00"):
         db_loan.status = "paid"
         logger.info(f"Loan {loan_id} has been fully paid off!")
-
+    
     try:
         session.commit()
         session.refresh(new_payment)
@@ -532,74 +641,207 @@ def register_payment(
             status_code=500, detail="Internal server error during payment"
         )
         
-@payment_router.get("/", response_model=list[PublicPayments])
-@limiter.limit("10/minute")
-def get_all_payments(
+@payment_router.patch("/{payment_id}", response_model=PublicPayments, status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def update_payment(
     request: Request,
+    payment_id: int,
+    payment_update: PaymentUpdate,
     session: Session = Depends(get_session),
-    admin: User = Depends(admin_required),
+    admin: User = Depends(admin_required)
 ):
-    logger.info(f"Admin {admin.email} requested the payments log.")
-    # Fetch all payments, ordering by the newest first
-    statement = select(Payments).order_by(col(Payments.id).desc())
-    results = session.exec(statement).all()
-    return results
+    logger.info(f"Admin {admin.email} is attempting to update amount for Payment #{payment_id}")
 
+    # 1. Fetch Payment AND the associated Loan (Eager Load!)
+    statement = select(Payments).where(Payments.id == payment_id).options(selectinload(Payments.loan))#type: ignore
+    db_payment = session.exec(statement).first()
+    
+    if not db_payment:
+        logger.warning(f"Update failed: Payment #{payment_id} not found.")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
+        
+    if not db_payment.loan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Associated loan not found")
 
-@admin_router.get("/dashboard-stats", response_model=AdminDashboardStats)
+    # 2. Calculate the "Virtual Debt"
+    # We combine the current loan debt + the money from THIS specific payment we are about to change.
+    # This gives us the "Total Debt Bucket" available to be paid.
+    
+    current_loan_late_fees = db_payment.loan.accumulated_late_fees
+    current_loan_interest = db_payment.loan.current_interest_due
+    current_loan_principal = db_payment.loan.remaining_balance
+    
+    # "Refund" the current payment values back into the debt pile
+    total_late_fees_owed = current_loan_late_fees + db_payment.late_fee_amount
+    total_interest_owed = current_loan_interest + db_payment.interest_amount
+    total_principal_owed = current_loan_principal + db_payment.principal_amount
+    
+    total_clearance_needed = total_late_fees_owed + total_interest_owed + total_principal_owed
+
+    # 3. Check for Overpayment
+    new_amount = payment_update.amount
+    if new_amount > total_clearance_needed:#type: ignore
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Overpayment! The max debt (including this payment) is {total_clearance_needed} RWF."
+        )
+
+    # 4. Re-Run the Waterfall Logic with the NEW Amount
+    cash_remaining = new_amount
+
+    # Bucket A: Late Fees
+    new_late_fee_part = min(cash_remaining, total_late_fees_owed)#type: ignore
+    cash_remaining -= new_late_fee_part#type: ignore
+
+    # Bucket B: Interest
+    new_interest_part = min(cash_remaining, total_interest_owed)
+    cash_remaining -= new_interest_part
+
+    # Bucket C: Principal
+    new_principal_part = cash_remaining
+
+    try:
+        db_payment.late_fee_amount = new_late_fee_part
+        db_payment.interest_amount = new_interest_part
+        db_payment.principal_amount = new_principal_part
+        
+        session.add(db_payment)
+        session.commit()
+        session.refresh(db_payment)
+        
+        logger.info(f"Payment #{payment_id} recalculated: {new_amount} RWF -> Fees: {new_late_fee_part}, Int: {new_interest_part}, Prin: {new_principal_part}")
+        return db_payment
+
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error recalculating Payment #{payment_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during payment recalculation."
+        )
+        
+@payment_router.delete("/{payment_id}", response_model=PaymentDelete, status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def delete_payment(
+    request: Request,
+    payment_id: int,
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required)
+):
+    logger.warning(f"Admin {admin.email} initiated deletion for Payment #{payment_id}")
+
+    db_payment = session.get(Payments, payment_id)
+    if not db_payment:
+        logger.error(f"Deletion failed: Payment #{payment_id} not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Payment not found"
+        )
+        
+    # 1. Safely navigate the relationships to avoid AttributeError crashes
+    loan = db_payment.loan
+    member = loan.member if loan else None
+    first_name = member.first_name if member else "Unknown"
+    last_name = member.last_name if member else "Member"
+    
+    amount = db_payment.total_amount
+    
+    deleted_payment = PaymentDelete(
+        member_names=f"{first_name} {last_name}",
+        payment_amount=amount
+    )
+    
+    try:
+        # 2. THE FIX: If the loan was 'paid', deleting this payment means 
+        # they likely owe money again. Revert the status to 'active'.
+        if loan and loan.status == "paid":
+            loan.status = "active"
+            session.add(loan)
+            logger.info(f"Loan #{loan.id} status automatically reverted to 'active'.")
+
+        # 3. Delete the payment
+        session.delete(db_payment)
+        session.commit()
+        
+        logger.info(f"Successfully deleted {amount} RWF payment #{payment_id} for {first_name} {last_name}.")
+        return deleted_payment
+        
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Database error during deletion of Payment #{payment_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during payment deletion."
+        )
+        
+#=======================================================
+#ADMIN ROUTES
+#======================================================
+@admin_router.get("/dashboard-stats", response_model=AdminDashboardStats, status_code=status.HTTP_200_OK)
 @limiter.limit("10/minute")
-def get_dashboard_stats(
+async def get_dashboard_stats(
     request: Request,
     session: Session = Depends(get_session),
     admin: User = Depends(admin_required),
 ):
     logger.info(f"Admin {admin.email} generated the financial dashboard.")
 
-    # 1. DATABASE AGGREGATION (Fast SQL Level calculations)
+    try:
+        # 1. DATABASE AGGREGATION (Lightning fast SQL Level calculations)
 
-    # Members & Savings
-    total_members = session.exec(select(func.count(Member.id))).one() or 0  # type: ignore
-    total_savings = session.exec(select(func.sum(Member.savings))).one() or Decimal(
-        "0.00"
-    )
+        # Members
+        total_members = session.exec(select(func.count(Member.id))).one() or 0 #type: ignore
+        
+        # THE FIX: Sum the actual 'amount' column from the Savings table
+        total_savings = session.exec(select(func.sum(Savings.amount))).one() or Decimal("0.00")
 
-    # Loans
-    total_loans_count = session.exec(select(func.count(Loan.id))).one() or 0  # type: ignore
-    total_principal_loaned = session.exec(
-        select(func.sum(Loan.amount))
-    ).one() or Decimal("0.00")
+        # Loans
+        total_loans_count = session.exec(select(func.count(Loan.id))).one() or 0 #type: ignore
+        total_principal_loaned = session.exec(
+            select(func.sum(Loan.amount))
+        ).one() or Decimal("0.00")
 
-    # Payments (Realized Profits & Principal Collected)
-    total_principal_collected = session.exec(
-        select(func.sum(Payments.principal_amount))
-    ).one() or Decimal("0.00")
-    total_interest_collected = session.exec(
-        select(func.sum(Payments.interest_amount))
-    ).one() or Decimal("0.00")
+        # Payments (Realized Profits & Principal Collected)
+        total_principal_collected = session.exec(
+            select(func.sum(Payments.principal_amount))
+        ).one() or Decimal("0.00")
+        
+        total_interest_collected = session.exec(
+            select(func.sum(Payments.interest_amount))
+        ).one() or Decimal("0.00")
 
-    # 2. PYTHON AGGREGATION (For dynamic @property calculations)
+        # 2. PYTHON AGGREGATION (For dynamic @property calculations)
 
-    # We need to fetch active loans WITH their payments to calculate dynamic metrics accurately
-    active_loans_statement = (
-        select(Loan).where(Loan.status == "active").options(selectinload(Loan.payments))  # type: ignore
-    )
-    active_loans = session.exec(active_loans_statement).all()
+        # Fetch active loans WITH their payments to calculate dynamic metrics accurately
+        active_loans_statement = (
+            select(Loan)
+            .where(Loan.status == "active")
+            .options(selectinload(Loan.payments))#type: ignore
+        )
+        active_loans = session.exec(active_loans_statement).all()
 
-    projected_late_fees = sum(
-        (loan.accumulated_late_fees for loan in active_loans), Decimal("0.00")
-    )
+        projected_late_fees = sum(
+            (loan.accumulated_late_fees for loan in active_loans), Decimal("0.00")
+        )
 
-    # Outstanding Principal is simply Loaned - Collected
-    outstanding_principal = total_principal_loaned - total_principal_collected
+        # Outstanding Principal is simply Loaned - Collected
+        outstanding_principal = total_principal_loaned - total_principal_collected
 
-    # 3. Construct and return the payload
-    return AdminDashboardStats(
-        total_members=total_members,
-        total_savings=round(total_savings, 2),
-        total_loans_issued_count=total_loans_count,
-        total_principal_loaned=round(total_principal_loaned, 2),
-        total_principal_collected=round(total_principal_collected, 2),
-        total_interest_collected=round(total_interest_collected, 2),
-        outstanding_principal=round(outstanding_principal, 2),
-        projected_late_fees=round(projected_late_fees, 2),
-    )
+        # 3. Construct and return the payload
+        return AdminDashboardStats(
+            total_members=total_members,
+            total_savings=round(total_savings, 2),
+            total_loans_issued_count=total_loans_count,
+            total_principal_loaned=round(total_principal_loaned, 2),
+            total_principal_collected=round(total_principal_collected, 2),
+            total_interest_collected=round(total_interest_collected, 2),
+            outstanding_principal=round(outstanding_principal, 2),
+            projected_late_fees=round(projected_late_fees, 2),
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to generate dashboard stats: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while generating dashboard statistics."
+        )

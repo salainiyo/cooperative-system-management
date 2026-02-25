@@ -18,12 +18,13 @@ class BasePayments(SQLModel):
     interest_amount: Decimal = Field(
         default=Decimal("0.00"), max_digits=12, decimal_places=2
     )
+    late_fee_amount: Decimal = Field(default=Decimal("0.00"), max_digits=12, decimal_places=2)
     paid_at: datetime = Field(default_factory=utc_now)
 
     @computed_field
     @property
     def total_amount(self) -> Decimal:
-        return self.principal_amount + self.interest_amount
+        return self.principal_amount + self.interest_amount + self.late_fee_amount
 
 
 class Payments(BasePayments, table=True):
@@ -43,12 +44,18 @@ class PublicPayments(BasePayments):
     id: int
     loan_id: int
 
+class PaymentUpdate(SQLModel):
+    amount: Decimal|None
 
+class PaymentDelete(SQLModel):
+    member_names: str
+    payment_amount: Decimal
+    
+    
 # 2. LOAN MODELS
 
 class BaseLoan(SQLModel):
     amount: Decimal = Field(max_digits=12, decimal_places=2)
-    payable_at: date = Field(description="The final deadline to clear the loan")
     monthly_payment: Decimal = Field(
         max_digits=12, decimal_places=2, description="Agreed monthly installment"
     )
@@ -134,6 +141,17 @@ class PublicLoan(BaseLoan):
     remaining_balance: Decimal | None = Decimal("0.00")
     current_interest_due: Decimal | None = Decimal("0.00")
     accumulated_late_fees: Decimal | None = Decimal("0.00")
+    
+class LoanUpdate(SQLModel):
+    amount: Decimal
+    monthly_payment: Decimal
+    
+class LoanDelete(SQLModel):
+    member: str
+    amount: Decimal
+    payment_times: int
+    remaining_amount: Decimal
+    
 
 
 class LoanWithPayments(BaseLoan):

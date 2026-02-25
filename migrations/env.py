@@ -5,7 +5,7 @@ from sqlmodel import SQLModel
 
 from core.app_logging import logger
 from db.database import database_url, engine
-from models.models import Member, Loan, Payments
+from models.models import Member, Loan, Payments, Savings
 from models.users import User
 
 # this is the Alembic Config object, which provides
