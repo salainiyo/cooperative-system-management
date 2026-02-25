@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from api.services import admin_router, loan_router, member_router, payment_router
+from api.services import admin_router, loan_router, member_router, payment_router, savings_router
 from api.users import user_router
 from core.rate_limiting import limiter
 from dependancies.scheduler import check_and_send_due_reminders
@@ -51,3 +51,4 @@ app.include_router(member_router)
 app.include_router(loan_router)
 app.include_router(payment_router)
 app.include_router(admin_router)
+app.include_router(savings_router)

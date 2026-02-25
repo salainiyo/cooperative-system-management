@@ -1,4 +1,5 @@
 from decimal import Decimal
+from typing import Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
@@ -80,6 +81,66 @@ def register_member(
         logger.error(f"Failed to register member: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@member_router.get("/", response_model=Dict[str, Any])
+@limiter.limit("20/minute")
+def get_all_members(
+    request: Request,
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required),
+    offset: int = 0,
+    limit: int = 20
+):
+    """
+    Retrieves a paginated list of members. 
+    Includes rate-limiting, input validation, and detailed logging.
+    """
+    # 1. Input Validation & Exception Handling
+    if offset < 0:
+        logger.warning(f"Admin {admin.email} provided negative offset: {offset}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Offset cannot be negative."
+        )
+    
+    # Cap the limit to prevent huge memory spikes
+    if limit > 100:
+        logger.warning(f"Admin {admin.email} requested excessive limit: {limit}. Capping to 100.")
+        limit = 100
+    if limit <= 0:
+        limit = 20
+
+    try:
+        logger.info(f"FETCH_MEMBERS: Admin {admin.email} fetching batch (offset={offset}, limit={limit})")
+
+        # 2. Get total count (using func.count() is much faster than len(all_results))
+        total_statement = select(func.count()).select_from(Member)
+        total_count = session.exec(total_statement).one()
+        
+        # 3. Fetch the specific slice
+        statement = (
+            select(Member)
+            .order_by(col(Member.created_at).desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        results = session.exec(statement).all()
+
+        logger.info(f"FETCH_SUCCESS: Successfully retrieved {len(results)} members for {admin.email}.")
+
+        return {
+            "members": results,
+            "total_count": total_count,
+            "offset": offset,
+            "limit": limit
+        }
+
+    except Exception as e:
+        # Catch-all for database connection errors or query failures
+        logger.error(f"DATABASE_ERROR: Error retrieving members for {admin.email}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal database error occurred while fetching members."
+        )
 
 @member_router.get("/search", response_model=list[MemberPublic])
 @limiter.limit("10/minute")

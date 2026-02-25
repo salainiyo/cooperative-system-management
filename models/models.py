@@ -176,7 +176,7 @@ class Savings(MemberSaving, table=True):
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now, sa_column_kwargs={"onupdate":utc_now})
     member_id: int|None = Field(default=None, foreign_key="member.id")
-    member: Optional["Member"] = Relationship(back_populates="savings", cascade_delete=True)
+    member: Optional["Member"] = Relationship(back_populates="savings")
     
 class SavingsRead(MemberSaving):
     id : int
@@ -214,7 +214,7 @@ class Member(MemberBase, table=True):
 
     # Relationships
     loans: List["Loan"] = Relationship(back_populates="member")
-    savings: List["Savings"] = Relationship(back_populates="member")
+    savings: List["Savings"] = Relationship(back_populates="member", cascade_delete=True)
     
     @property
     def total_savings(self):
