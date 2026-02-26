@@ -34,5 +34,8 @@ jobs:
         EXPIRATION_TIME_MINUTES : 30
         EXPIRATION_TIME_DAYS : 3
         ALGORITHM : HS256
+        SENDER_EMAIL : your_email@gmail.com
+        SENDER_PASSWORD : your_16_character_app_password
+        ADMIN_EMAIL : admin_receiving_email@gmail.com
       run: |
         pytest -v
