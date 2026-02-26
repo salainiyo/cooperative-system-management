@@ -28,5 +28,11 @@ jobs:
         pip install pytest httpx
 
     - name: Run Pytest Suite
+      env:
+        DATABASE_URL : sqlite:///./test_ci_database.db
+        SECRET_KEY : This=is-test-environment-keys-blah-blah
+        EXPIRATION_TIME_MINUTES : 30
+        EXPIRATION_TIME_DAYS : 3
+        ALGORITHM : HS256
       run: |
         pytest -v
