@@ -141,6 +141,8 @@ class PublicLoan(BaseLoan):
     remaining_balance: Decimal | None = Decimal("0.00")
     current_interest_due: Decimal | None = Decimal("0.00")
     accumulated_late_fees: Decimal | None = Decimal("0.00")
+    next_due_date: date | None = None
+    approved_at: datetime
     
 class LoanUpdate(SQLModel):
     amount: Decimal

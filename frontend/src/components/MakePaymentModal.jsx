@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, DollarSign, AlertCircle, Loader2 } from 'lucide-react';
 import { api } from '../api';
+import { useToast } from '../context/ToastContext';
 
 const formatMoney = (amount) => parseFloat(amount || 0).toLocaleString('en-RW', { maximumFractionDigits: 0 });
 
@@ -8,6 +9,8 @@ export default function MakePaymentModal({ loan, onClose, onSuccess }) {
   const [amount, setAmount] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  
+  const { showToast } = useToast();
 
   const totalClearance = parseFloat(loan.remaining_balance || 0) + parseFloat(loan.current_interest_due || 0) + parseFloat(loan.accumulated_late_fees || 0);
 
@@ -19,6 +22,7 @@ export default function MakePaymentModal({ loan, onClose, onSuccess }) {
     setLoading(true); setError(null);
     try {
       await api.createPayment(loan.id, { amount: paymentAmount });
+      showToast(`Payment of ${formatMoney(paymentAmount)} RWF recorded!`);
       onSuccess();
     } catch (err) { setError(err.message); } 
     finally { setLoading(false); }

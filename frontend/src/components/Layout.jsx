@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, LogOut, Search, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Users, LogOut, Search, Menu, X, CalendarClock } from 'lucide-react';
 import { api } from '../api';
 import GlobalSearch from './GlobalSearch';
 
 export default function Layout({ user }) {
   const location = useLocation();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Mobile state
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const handleLogout = async () => {
     if (window.confirm('Are you sure you want to log out?')) {
@@ -17,6 +17,7 @@ export default function Layout({ user }) {
   const navItems = [
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/members', icon: Users, label: 'Members' },
+    { path: '/collections', icon: CalendarClock, label: 'Due Payments' },
   ];
 
   return (
@@ -62,7 +63,6 @@ export default function Layout({ user }) {
               <p className="text-slate-400 text-xs">Management System</p>
             </div>
           </div>
-          {/* Mobile Close Button */}
           <button 
             className="md:hidden text-slate-400 hover:text-white"
             onClick={() => setIsMobileMenuOpen(false)}
@@ -81,7 +81,7 @@ export default function Layout({ user }) {
               <Link
                 key={item.path}
                 to={item.path}
-                onClick={() => setIsMobileMenuOpen(false)} // Close menu on click
+                onClick={() => setIsMobileMenuOpen(false)}
                 className={`flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
                   isActive
                     ? 'bg-indigo-500/10 text-indigo-400'
@@ -116,7 +116,7 @@ export default function Layout({ user }) {
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         
-        {/* Desktop Header with Search (Hidden on Mobile) */}
+        {/* Desktop Header with Search */}
         <header className="hidden md:flex h-16 bg-slate-900 border-b border-slate-800 items-center px-6 gap-6 sticky top-0 z-30">
           <div className="flex items-center gap-2 text-slate-400">
             <Search className="w-5 h-5" />
@@ -129,7 +129,6 @@ export default function Layout({ user }) {
 
         {/* Page Content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-950">
-          {/* Mobile Global Search (Shows below header on mobile) */}
           <div className="md:hidden mb-6 relative z-30">
             <GlobalSearch />
           </div>

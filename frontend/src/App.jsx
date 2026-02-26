@@ -6,12 +6,18 @@ import Layout from './components/Layout';
 import AdminDashboard from './components/AdminDashboard';
 import MemberProfile from './components/MemberProfile';
 import MembersDirectory from './components/MembersDirectory';
-import { ToastProvider } from './context/ToastContext'; // <-- Import the provider
+import CollectionsReport from './components/CollectionsReport';
+import { ToastProvider } from './context/ToastContext';
 import './App.css';
 
+// Protected Route wrapper
 function ProtectedRoute({ children }) {
   const isAuthenticated = tokenManager.isAuthenticated();
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  
+  if (!isAuthenticated) {
+    return <Navigate to="/login" replace />;
+  }
+  
   return children;
 }
 
@@ -32,6 +38,7 @@ function App() {
       }
       setLoading(false);
     };
+
     checkAuth();
   }, []);
 
@@ -44,16 +51,25 @@ function App() {
   }
 
   return (
-    // <-- Wrap everything in ToastProvider
-    <ToastProvider> 
+    <ToastProvider>
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login setUser={setUser} />} />
-          <Route path="/" element={<ProtectedRoute><Layout user={user} /></ProtectedRoute>}>
+          
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <Layout user={user} />
+              </ProtectedRoute>
+            }
+          >
             <Route index element={<AdminDashboard />} />
             <Route path="members" element={<MembersDirectory />} />
+            <Route path="collections" element={<CollectionsReport />} />
             <Route path="member/:memberId" element={<MemberProfile />} />
           </Route>
+
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>

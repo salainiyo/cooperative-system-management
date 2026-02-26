@@ -251,10 +251,10 @@ async def update_member(
             detail="Internal server error during update."
         )
         
-@member_router.delete("/delete/{member_id}", response_model=MemberDeleted, status_code=status.HTTP_200_OK)
+@member_router.delete("/{member_id}", response_model=MemberDeleted, status_code=status.HTTP_200_OK)
 @limiter.limit("3/minute")
 async def delete_member(
-    request: Request, # Required by the limiter!
+    request: Request,
     member_id: int,
     session: Session = Depends(get_session),
     admin: User = Depends(admin_required)
@@ -268,7 +268,40 @@ async def delete_member(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Member not found"
         )
+        
+    # ==========================================
+    # FINANCIAL SAFEGUARDS (The "Safe Delete" Rules)
+    # ==========================================
     
+    # 1. PRIORITY CHECK: Do they owe us money? (Active Loans)
+    has_active_loan = False
+    if hasattr(db_member, "loans"):
+        for loan in db_member.loans:
+            if getattr(loan, "status", "") != "paid":
+                has_active_loan = True
+                break
+                
+    if has_active_loan:
+        logger.error(f"Deletion blocked: Member #{member_id} has an active loan.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete member. They have an active loan that must be paid first."
+        )
+
+    # 2. SECONDARY CHECK: Do we owe them money? (Savings)
+    has_savings = getattr(db_member, "total_savings", 0) > 0
+    if not has_savings and hasattr(db_member, "savings"):
+        has_savings = sum(s.amount for s in db_member.savings) > 0
+        
+    if has_savings:
+        logger.error(f"Deletion blocked: Member #{member_id} still has savings.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete member. They still have savings in the cooperative."
+        )
+        
+    # ==========================================
+
     try:
         session.delete(db_member)
         session.commit()
@@ -713,35 +746,26 @@ async def update_payment(
 ):
     logger.info(f"Admin {admin.email} is attempting to update amount for Payment #{payment_id}")
 
-    # 1. Fetch Payment AND the associated Loan (Eager Load!)
+    # 1. Fetch Payment AND the associated Loan
     statement = select(Payments).where(Payments.id == payment_id).options(selectinload(Payments.loan))#type: ignore
     db_payment = session.exec(statement).first()
     
-    if not db_payment:
-        logger.warning(f"Update failed: Payment #{payment_id} not found.")
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment not found")
-        
-    if not db_payment.loan:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Associated loan not found")
+    if not db_payment or not db_payment.loan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payment or associated loan not found")
 
-    # 2. Calculate the "Virtual Debt"
-    # We combine the current loan debt + the money from THIS specific payment we are about to change.
-    # This gives us the "Total Debt Bucket" available to be paid.
+    loan = db_payment.loan
+
+    # 2. Reconstruct the "Pre-Payment" mathematical state
+    # We find out what the loan looked like mathematically BEFORE this specific payment existed
+    pre_payment_principal = loan.remaining_balance + db_payment.principal_amount
+    pre_payment_interest = round(pre_payment_principal * Decimal("0.015"), 2)
+    pre_payment_late_fees = loan.accumulated_late_fees + db_payment.late_fee_amount
     
-    current_loan_late_fees = db_payment.loan.accumulated_late_fees
-    current_loan_interest = db_payment.loan.current_interest_due
-    current_loan_principal = db_payment.loan.remaining_balance
-    
-    # "Refund" the current payment values back into the debt pile
-    total_late_fees_owed = current_loan_late_fees + db_payment.late_fee_amount
-    total_interest_owed = current_loan_interest + db_payment.interest_amount
-    total_principal_owed = current_loan_principal + db_payment.principal_amount
-    
-    total_clearance_needed = total_late_fees_owed + total_interest_owed + total_principal_owed
+    total_clearance_needed = pre_payment_principal + pre_payment_interest + pre_payment_late_fees
 
     # 3. Check for Overpayment
     new_amount = payment_update.amount
-    if new_amount > total_clearance_needed:#type: ignore
+    if new_amount > total_clearance_needed: #type: ignore
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Overpayment! The max debt (including this payment) is {total_clearance_needed} RWF."
@@ -750,23 +774,32 @@ async def update_payment(
     # 4. Re-Run the Waterfall Logic with the NEW Amount
     cash_remaining = new_amount
 
-    # Bucket A: Late Fees
-    new_late_fee_part = min(cash_remaining, total_late_fees_owed)#type: ignore
-    cash_remaining -= new_late_fee_part#type: ignore
+    new_late_fee_part = min(cash_remaining, pre_payment_late_fees) #type: ignore
+    cash_remaining -= new_late_fee_part #type: ignore
 
-    # Bucket B: Interest
-    new_interest_part = min(cash_remaining, total_interest_owed)
+    new_interest_part = min(cash_remaining, pre_payment_interest)
     cash_remaining -= new_interest_part
 
-    # Bucket C: Principal
     new_principal_part = cash_remaining
 
     try:
+        # 5. Update the physical database columns for the payment
+        # (We do NOT touch loan.remaining_balance or payment.total_amount because they are dynamic @properties!)
         db_payment.late_fee_amount = new_late_fee_part
         db_payment.interest_amount = new_interest_part
         db_payment.principal_amount = new_principal_part
         
+        # Save the payment first so the Loan properties can auto-calculate based on the new data
         session.add(db_payment)
+        session.commit()
+        
+        # 6. Check if the loan is now paid off based on the newly auto-calculated remaining balance!
+        if loan.remaining_balance <= Decimal("0.00"):
+            loan.status = "paid"
+        else:
+            loan.status = "active"
+            
+        session.add(loan)
         session.commit()
         session.refresh(db_payment)
         
