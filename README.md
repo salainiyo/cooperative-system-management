@@ -4,7 +4,7 @@ A robust, full-stack financial management platform designed to digitize operatio
 
 Built with a focus on mathematical accuracy and data integrity, this system handles complex financial logic including automated waterfall payment distributions, dynamic interest calculations, and time-based late fee penalties.
 
-## 🚀 Tech Stack
+## Tech Stack
 
 **Backend**
 * **Framework:** Python 3.11, FastAPI
@@ -44,3 +44,23 @@ SECRET_KEY=your_super_secret_jwt_key
 ALGORITHM=HS256
 EXPIRATION_TIME_MINUTES=30
 EXPIRATION_TIME_DAYS = 3
+
+3. Launch the Application
+Run the following command from the root directory to build the images and start the network:
+docker-compose up -d --build
+
+4. Run Database Migrations
+On the very first launch, the SQLite volume will be empty. Apply the Alembic migrations to build the tables:
+docker exec -it cooperative_backend alembic upgrade head
+
+5. Access the Application
+Frontend UI: http://localhost:5173
+
+Backend API Docs (Swagger): http://localhost:8000/docs
+
+Testing
+The backend is covered by a comprehensive Pytest suite that actively tests edge cases in loan math, savings logic, and user permissions.
+To run the tests locally:
+cd backend
+pytest -v
+(Note: Tests are also run automatically via GitHub Actions on every push to the main branch).
