@@ -23,6 +23,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
+        cd backend
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         pip install pytest httpx
@@ -38,4 +39,5 @@ jobs:
         SENDER_PASSWORD : your_16_character_app_password
         ADMIN_EMAIL : admin_receiving_email@gmail.com
       run: |
+        cd backend
         pytest -v

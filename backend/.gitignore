@@ -210,3 +210,4 @@ users.db
 .venv/
 __pycache__/
 .pytest_cache/
+create_admin.py
