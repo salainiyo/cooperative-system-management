@@ -11,20 +11,15 @@ services:
 
   # 2. Your FastAPI Backend
   backend:
-    build: ./backend
+    image: alains04/coop-backend:latest
     container_name: cooperative_backend
     ports:
-      # Maps port 8000 on your Windows machine to port 80 inside the container 
-      # (since your Dockerfile exposes port 80)
       - "8000:80"
     env_file:
-      - ./backend/.env
+      - .env  # Pointing directly to the .env file on the server
     environment:
-      # This tells your rate limiter to use the Redis container
       - REDIS_URL=redis://redis:6379/0
     volumes:
-      # CRITICAL: This is the persistent database volume!
-      # It maps a folder named 'coop_db' on your computer to '/backend/data' in the container.
       - ./coop_db:/backend/data
     depends_on:
       - redis
@@ -32,7 +27,7 @@ services:
 
   # 3. Your React/Vite Frontend
   frontend:
-    build: ./frontend
+    image: alains04/coop-frontend:latest
     container_name: cooperative_frontend
     ports:
       - "5173:80"
