@@ -24,11 +24,11 @@ services:
     container_name: cooperative_backend
     env_file: .env
     environment:
-      - DATABASE_URL=sqlite:////backend/data/users.db
-    # We REMOVE the ports here because Caddy will talk to it internally
+      # Use the root /data folder
+      - DATABASE_URL=sqlite:////data/users.db
     restart: unless-stopped
     volumes:
-      # This is your new "Memory Card" for the SQLite database
+      # Map the persistent volume to the exact same root /data folder
       - coop_db_data:/data
 
   frontend:
