@@ -1,15 +1,15 @@
 ikimina.duckdns.org {
-    # Send /auth requests to the backend on port 80 (Keeps the /auth prefix)
-    handle /auth/* {
+    # Match /auth and anything starting with /auth/
+    handle /auth* {
         reverse_proxy cooperative_backend:80
     }
     
-    # Send /api requests to the backend on port 80 (Keeps the /api prefix)
-    handle /api/* {
+    # Match /api and anything starting with /api/
+    handle /api* {
         reverse_proxy cooperative_backend:80
     }
 
-    # Send absolutely everything else to the frontend on port 80
+    # Everything else to the frontend
     handle {
         reverse_proxy cooperative_frontend:80
     }
