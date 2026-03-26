@@ -23,6 +23,8 @@ services:
     image: alains04/coop-backend:latest
     container_name: cooperative_backend
     env_file: .env
+    environment:
+      - DATABASE_URL=sqlite:////backend/data/users.db
     # We REMOVE the ports here because Caddy will talk to it internally
     restart: unless-stopped
     volumes:
