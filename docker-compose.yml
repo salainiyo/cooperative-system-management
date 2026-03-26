@@ -30,7 +30,7 @@ services:
     image: alains04/coop-frontend:latest
     container_name: cooperative_frontend
     ports:
-      - "5173:80"
+      - "80:80"
     depends_on:
       - backend
     restart: unless-stopped
