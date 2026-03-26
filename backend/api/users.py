@@ -116,6 +116,13 @@ async def login(
         "token_type": "bearer",
     }
 
+@user_router.get("/me", response_model=UserRead)
+def get_me(user: User = Depends(current_user)):
+    """
+    This is the route your frontend is calling!
+    It uses the token to find the user and returns their info.
+    """
+    return user
 
 @user_router.post("/logout")
 async def logout(
