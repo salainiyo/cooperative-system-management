@@ -1,15 +1,32 @@
 ikimina.duckdns.org {
-    # Match /auth and anything starting with /auth/
     handle /auth* {
         reverse_proxy cooperative_backend:80
     }
-    
-    # Match /api and anything starting with /api/
+
     handle /api* {
         reverse_proxy cooperative_backend:80
     }
 
-    # Everything else to the frontend
+    handle /member* {
+        reverse_proxy cooperative_backend:80
+    }
+
+    handle /savings* {
+        reverse_proxy cooperative_backend:80
+    }
+
+    handle /loan* {
+        reverse_proxy cooperative_backend:80
+    }
+
+    handle /payment* {
+        reverse_proxy cooperative_backend:80
+    }
+
+    handle /admin* {
+        reverse_proxy cooperative_backend:80
+    }
+
     handle {
         reverse_proxy cooperative_frontend:80
     }
