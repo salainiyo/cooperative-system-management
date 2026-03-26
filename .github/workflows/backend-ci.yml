@@ -1,43 +1,78 @@
-name: Backend CI
+name: Cooperative App CI/CD
 
-# 1. When should this run?
+# 1. THE TRIGGER
 on:
   push:
     branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
 
-# 2. What should it do?
 jobs:
+  # ==========================================
+  # JOB 1: THE TESTING GATEKEEPER
+  # ==========================================
   test-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Grab the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest httpx
+
+      - name: Run Pytest Suite
+        env:
+          DATABASE_URL : sqlite:///./test_ci_database.db
+          SECRET_KEY : This=is-test-environment-keys-blah-blah
+          EXPIRATION_TIME_MINUTES : 30
+          EXPIRATION_TIME_DAYS : 3
+          ALGORITHM : HS256
+          SENDER_EMAIL : your_email@gmail.com
+          SENDER_PASSWORD : your_16_character_app_password
+          ADMIN_EMAIL : admin_receiving_email@gmail.com
+        run: |
+          cd backend
+          pytest -v
+
+  # ==========================================
+  # JOB 2: THE DOCKER FACTORY
+  # ==========================================
+  build-and-push:
+    # CRITICAL: This tells GitHub to wait for the tests to pass first!
+    needs: test-backend 
+    # Only run the build/push if this is a push to main (not just a PR test)
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
-    - name: Grab the code from the repository
-      uses: actions/checkout@v4
+      - name: Check out the repo
+        uses: actions/checkout@v4
 
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.11"
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Install Dependencies
-      run: |
-        cd backend
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install pytest httpx
+      - name: Build and push Backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: alains04/coop-backend:latest
 
-    - name: Run Pytest Suite
-      env:
-        DATABASE_URL : sqlite:///./test_ci_database.db
-        SECRET_KEY : This=is-test-environment-keys-blah-blah
-        EXPIRATION_TIME_MINUTES : 30
-        EXPIRATION_TIME_DAYS : 3
-        ALGORITHM : HS256
-        SENDER_EMAIL : your_email@gmail.com
-        SENDER_PASSWORD : your_16_character_app_password
-        ADMIN_EMAIL : admin_receiving_email@gmail.com
-      run: |
-        cd backend
-        pytest -v
+      - name: Build and push Frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          push: true
+          tags: alains04/coop-frontend:latest
