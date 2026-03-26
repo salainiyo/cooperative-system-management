@@ -1,4 +1,4 @@
-const API_BASE = 'https://ikimina.duckdns.org:8000';
+const API_BASE = 'https://ikimina.duckdns.org:8000/auth';
 
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
