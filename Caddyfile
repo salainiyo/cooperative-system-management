@@ -1,0 +1,14 @@
+ikimina.duckdns.org {
+    # Route main traffic to the frontend
+    reverse_proxy cooperative_frontend:80
+
+    # Route any request starting with /auth or /api to the backend
+    # Adjust these paths based on your FastAPI routes
+    handle_path /auth/* {
+        reverse_proxy cooperative_backend:80
+    }
+    
+    handle_path /api/* {
+        reverse_proxy cooperative_backend:80
+    }
+}

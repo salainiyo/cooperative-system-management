@@ -14,7 +14,7 @@ from core.rate_limiting import limiter
 origins = [
     "http://localhost:5173",  # Standard Vite/React port
     "http://localhost:3000",  # Standard Create React App/Next.js port
-    "http://ikimina.duckdns.org",
+    "https://ikimina.duckdns.org",
     "*",  # Allow all for development (change later!)
 ]
 app = FastAPI(title="Ikimina management system")

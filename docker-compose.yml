@@ -1,36 +1,37 @@
 version: '3.8'
 
 services:
-  # 1. The Redis Cache (For Rate Limiting)
+  # 1. THE NEW FRONT DOOR (Caddy)
+  caddy:
+    image: caddy:latest
+    container_name: caddy_proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
   redis:
     image: redis:alpine
     container_name: cooperative_redis
-    ports:
-      - "6379:6379"
     restart: unless-stopped
 
-  # 2. Your FastAPI Backend
   backend:
     image: alains04/coop-backend:latest
     container_name: cooperative_backend
-    ports:
-      - "8000:80"
-    env_file:
-      - .env  # Pointing directly to the .env file on the server
-    environment:
-      - REDIS_URL=redis://redis:6379/0
-    volumes:
-      - ./coop_db:/backend/data
-    depends_on:
-      - redis
+    env_file: .env
+    # We REMOVE the ports here because Caddy will talk to it internally
     restart: unless-stopped
 
-  # 3. Your React/Vite Frontend
   frontend:
     image: alains04/coop-frontend:latest
     container_name: cooperative_frontend
-    ports:
-      - "80:80"
-    depends_on:
-      - backend
+    # We REMOVE the ports here because Caddy will talk to it internally
     restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
