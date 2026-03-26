@@ -29,7 +29,7 @@ services:
     restart: unless-stopped
     volumes:
       # This is your new "Memory Card" for the SQLite database
-      - coop_db_data:/data
+      - coop_db_data:/backend/data
 
   frontend:
     image: alains04/coop-frontend:latest
