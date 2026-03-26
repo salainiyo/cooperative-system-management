@@ -25,6 +25,9 @@ services:
     env_file: .env
     # We REMOVE the ports here because Caddy will talk to it internally
     restart: unless-stopped
+    volumes:
+      # This is your new "Memory Card" for the SQLite database
+      - coop_db_data:/backend/data
 
   frontend:
     image: alains04/coop-frontend:latest
@@ -35,3 +38,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  coop_db_data: # Registers the new database volume with Docker
