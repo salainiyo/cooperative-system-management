@@ -1,8 +1,15 @@
 ikimina.duckdns.org {
+    # 1. The new rule for your updated frontend
     handle_path /api* {
         reverse_proxy cooperative_backend:80
     }
 
+    # 2. THE SAFETY NET: Let the old cached login requests through!
+    handle /auth* {
+        reverse_proxy cooperative_backend:80
+    }
+
+    # 3. The React Frontend
     handle {
         reverse_proxy cooperative_frontend:80
     }
