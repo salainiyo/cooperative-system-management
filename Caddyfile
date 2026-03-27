@@ -1,11 +1,8 @@
 ikimina.duckdns.org {
-    # 1. Safely catch API traffic and explicitly strip just the word "/api"
-    handle /api/* {
-        uri strip_prefix /api
+    handle_path /api* {
         reverse_proxy cooperative_backend:80
     }
 
-    # 2. Everything else (including page refreshes!) goes safely to React
     handle {
         reverse_proxy cooperative_frontend:80
     }
