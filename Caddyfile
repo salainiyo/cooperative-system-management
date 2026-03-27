@@ -1,15 +1,11 @@
 ikimina.duckdns.org {
-    # 1. The new rule for your updated frontend
-    handle_path /api* {
+    # 1. Safely catch API traffic and explicitly strip just the word "/api"
+    handle /api/* {
+        uri strip_prefix /api
         reverse_proxy cooperative_backend:80
     }
 
-    # 2. THE SAFETY NET: Let the old cached login requests through!
-    handle /auth* {
-        reverse_proxy cooperative_backend:80
-    }
-
-    # 3. The React Frontend
+    # 2. Everything else (including page refreshes!) goes safely to React
     handle {
         reverse_proxy cooperative_frontend:80
     }
