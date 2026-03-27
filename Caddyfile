@@ -1,10 +1,8 @@
 ikimina.duckdns.org {
-    # 1. Catch API calls, STRIP the "/api" prefix, and send to the Python backend
     handle_path /api* {
         reverse_proxy cooperative_backend:80
     }
 
-    # 2. Everything else (including page refreshes for /members) goes to React!
     handle {
         reverse_proxy cooperative_frontend:80
     }
