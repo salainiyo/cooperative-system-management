@@ -10,6 +10,6 @@ ikimina.duckdns.org {
         reverse_proxy cooperative_frontend:80
     }
 }
-alains-algo.duckdns.org {
-    reverse_proxy 35.184.173.197:8080
+algodash.duckdns.org {
+    reverse_proxy 172.17.0.1:8080
 }
