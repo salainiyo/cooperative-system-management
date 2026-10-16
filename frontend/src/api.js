@@ -17,11 +17,28 @@ export const tokenManager = {
   isAuthenticated: () => !!localStorage.getItem(ACCESS_TOKEN_KEY),
 };
 
+const CONNECTION_ERROR_MESSAGE =
+  'Connection error — check your internet connection and try again.';
+
+// fetch() rejects with TypeError when the network is unreachable (offline,
+// DNS failure, server down). Users would otherwise see the raw browser
+// message "Failed to fetch", so translate it into something actionable.
+async function safeFetch(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(CONNECTION_ERROR_MESSAGE);
+    }
+    throw error;
+  }
+}
+
 async function refreshAccessToken() {
   const refreshToken = tokenManager.getRefreshToken();
   if (!refreshToken) throw new Error('No refresh token available');
 
-  const response = await fetch(`${API_BASE}/auth/refresh`, {
+  const response = await safeFetch(`${API_BASE}/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token: refreshToken }),
@@ -49,14 +66,17 @@ export async function fetchWithAuth(endpoint, options = {}) {
     },
   };
 
-  let response = await fetch(`${API_BASE}${endpoint}`, config);
+  let response = await safeFetch(`${API_BASE}${endpoint}`, config);
 
   if (response.status === 401) {
     try {
       accessToken = await refreshAccessToken();
       config.headers.Authorization = `Bearer ${accessToken}`;
-      response = await fetch(`${API_BASE}${endpoint}`, config);
+      response = await safeFetch(`${API_BASE}${endpoint}`, config);
     } catch (error) {
+      // A network failure is not an auth failure: stay signed in and let the
+      // caller surface the connection problem instead of bouncing to /login.
+      if (error.message === CONNECTION_ERROR_MESSAGE) throw error;
       tokenManager.clearTokens();
       window.location.href = '/login';
       throw error;
@@ -75,7 +95,7 @@ export const api = {
     const formData = new URLSearchParams();
     formData.append('username', email);
     formData.append('password', password);
-    const response = await fetch(`${API_BASE}/auth/login`, {
+    const response = await safeFetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: formData,
@@ -99,7 +119,7 @@ export const api = {
   },
   getCurrentUser: () => fetchWithAuth('/auth/me'),
   forgotPassword: async (email) => {
-    const response = await fetch(`${API_BASE}/auth/forgot-password`, {
+    const response = await safeFetch(`${API_BASE}/auth/forgot-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email }),
@@ -109,7 +129,7 @@ export const api = {
     return data;
   },
   resetPassword: async (token, newPassword) => {
-    const response = await fetch(`${API_BASE}/auth/reset-password`, {
+    const response = await safeFetch(`${API_BASE}/auth/reset-password`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token, new_password: newPassword }),
@@ -184,12 +204,12 @@ export const api = {
   getLoanDetail: (loanId) => fetchWithAuth(`/loan/${loanId}`),
   downloadCsv: async (dataset) => {
     let accessToken = tokenManager.getAccessToken();
-    let response = await fetch(`${API_BASE}/admin/export/${dataset}.csv`, {
+    let response = await safeFetch(`${API_BASE}/admin/export/${dataset}.csv`, {
       headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
     });
     if (response.status === 401) {
       accessToken = await refreshAccessToken();
-      response = await fetch(`${API_BASE}/admin/export/${dataset}.csv`, {
+      response = await safeFetch(`${API_BASE}/admin/export/${dataset}.csv`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       });
     }
