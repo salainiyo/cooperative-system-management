@@ -15,6 +15,8 @@ infra/
 - An OCI account with an **API signing key** — Phase 0 steps are in
   [`terraform/README.md`](terraform/README.md) (tenancy OCID, user OCID,
   fingerprint, private key)
+- An **HCP Terraform** account (free tier) for remote state — see
+  [Remote state](terraform/README.md#remote-state--hcp-terraform-free-tier)
 
 ## 1. Terraform — create the instance
 
@@ -30,6 +32,11 @@ terraform output public_ip
 Free-tier guardrails are enforced as variable validations: requesting any
 shape other than `VM.Standard.E2.1.Micro`, or a boot volume outside
 47–200 GB, fails at `plan` instead of billing you.
+
+State lives on **HCP Terraform** (free tier, workspace `coop-oci`) with
+locking and version history — never on this laptop or the managed VM. CI
+runs `terraform plan` on every change under `infra/terraform/` and posts the
+diff to the GitHub Actions job summary; applies stay local and manual.
 
 ## 2. Vault — the three secrets
 
