@@ -12,7 +12,7 @@ jobs:
   # JOB 1: THE TESTING GATEKEEPER
   # ==========================================
   test-backend:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     services:
       postgres:
         image: postgres:16-alpine
@@ -86,7 +86,7 @@ jobs:
   # JOB 1b: FRONTEND TESTS + BUILD
   # ==========================================
   test-frontend:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Grab the code
         uses: actions/checkout@v7
@@ -121,7 +121,7 @@ jobs:
     needs: [test-backend, test-frontend]
     # Only run the build/push if this is a push to main (not just a PR test)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out the repo
