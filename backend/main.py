@@ -1,9 +1,12 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_fastapi_instrumentator import PrometheusFastApiInstrumentator
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy import text
+from sqlmodel import Session
 
 from api.admin_settings import settings_router
 from api.loan_requests import loan_requests_admin_router
@@ -13,6 +16,7 @@ from api.reports import reports_router
 from api.services import admin_router, loan_router, member_router, payment_router, savings_router
 from api.users import user_router
 from core.rate_limiting import limiter
+from db.database import engine
 
 DEFAULT_ORIGINS = "http://localhost:5173,http://localhost:3000"
 ALLOWED_ORIGINS = [
@@ -32,6 +36,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.get("/health")
+def health():
+    try:
+        with Session(engine) as session:
+            session.execute(text("SELECT 1"))
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "degraded", "database": "unavailable"},
+        )
+    return {"status": "ok", "database": "ok"}
+
+
 app.include_router(user_router)
 app.include_router(settings_router)
 app.include_router(portal_router)
@@ -44,3 +62,7 @@ app.include_router(loan_router)
 app.include_router(payment_router)
 app.include_router(admin_router)
 app.include_router(savings_router)
+
+PrometheusFastApiInstrumentator(
+    excluded_handlers=["/health", "/metrics"],
+).instrument(app).expose(app, include_in_schema=False)
