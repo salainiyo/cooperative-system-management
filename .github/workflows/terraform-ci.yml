@@ -77,7 +77,12 @@ jobs:
           TF_VAR_ssh_public_key_path: ~/.ssh/id_ed25519.pub
         run: |
           set +e
-          terraform plan -no-color -detailed-exitcode -out=tfplan | tee plan.txt
+          # -refresh=false: the generated Ansible inventory (local_file) is
+          # gitignored, so on a fresh clone its file doesn't exist and the
+          # provider would always report it as "will be created". Drift
+          # detection happens on every laptop plan/apply; CI's job is to
+          # validate the config and preview the diff against known state.
+          terraform plan -refresh=false -no-color -detailed-exitcode -out=tfplan | tee plan.txt
           code=${PIPESTATUS[0]}
           echo "plan exit code: $code (0 = no changes, 2 = changes proposed)"
           if [ "$code" = "1" ]; then

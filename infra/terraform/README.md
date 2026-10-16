@@ -69,10 +69,14 @@ terraform output public_ip                      # ← point DuckDNS here
 
 Every push that touches `infra/terraform/**` also runs **`terraform plan` in
 CI** (`.github/workflows/terraform-ci.yml`): `fmt -check` → `init` (remote
-state + lock) → `plan -detailed-exitcode`, with the rendered plan posted to
-the job summary. CI is read-only — `apply` always happens from a laptop.
-Required GitHub secrets: `TF_CLOUD_TOKEN`, `TF_TENANCY_OCID`, `TF_USER_OCID`,
-`TF_FINGERPRINT`, `TF_PRIVATE_KEY` (the PEM), `TF_SSH_PUBLIC_KEY`.
+state + lock) → `plan -refresh=false -detailed-exitcode`, with the rendered
+plan posted to the job summary. The refresh is skipped because the generated
+Ansible inventory is gitignored — on a fresh clone the `local_file` provider
+would always flag it as missing; drift detection happens on every laptop
+`plan`/`apply` instead. CI is read-only — `apply` always happens from a
+laptop. Required GitHub secrets: `TF_CLOUD_TOKEN`, `TF_TENANCY_OCID`,
+`TF_USER_OCID`, `TF_FINGERPRINT`, `TF_PRIVATE_KEY` (the PEM),
+`TF_SSH_PUBLIC_KEY`.
 
 `terraform apply` also writes the Ansible inventory to
 `../ansible/inventory/hosts.yml`, so the next step is just:
