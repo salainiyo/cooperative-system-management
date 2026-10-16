@@ -1,0 +1,114 @@
+name: Terraform CI
+
+# Validates infrastructure-as-code on every change that touches it:
+#   fmt → init (HCP remote state + lock) → plan → diff posted to the job summary.
+# READ-ONLY by design: applies always run from a laptop, never from CI.
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/terraform-ci.yml"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - "infra/terraform/**"
+      - ".github/workflows/terraform-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-plan:
+    # Fork PRs carry no secrets — skip instead of failing.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-26.04
+    env:
+      TF_IN_AUTOMATION: "1"
+      # HCP Terraform token (remote state + locking), never echoed.
+      TF_TOKEN_app_terraform_io: ${{ secrets.TF_CLOUD_TOKEN }}
+      # Required input variables. Non-secret values mirror terraform.tfvars
+      # (gitignored) so the plan matches what a laptop produces.
+      TF_VAR_tenancy_ocid: ${{ secrets.TF_TENANCY_OCID }}
+      TF_VAR_user_ocid: ${{ secrets.TF_USER_OCID }}
+      TF_VAR_fingerprint: ${{ secrets.TF_FINGERPRINT }}
+      TF_VAR_region: "uk-london-1"
+      # E2.1.Micro limits are per-AD in this tenancy (AD-1/AD-2 are full) —
+      # without this the data source picks AD-1 and plans a bogus replacement.
+      TF_VAR_availability_domain_name: "UzBZ:UK-LONDON-1-AD-3"
+      # Recorded as a string in the generated Ansible inventory (never opened
+      # by Terraform) — must match terraform.tfvars or the local_file diffs.
+      TF_VAR_ssh_private_key_path: "/home/alain/.ssh/id_ed25519"
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v7
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: "1.16.5"
+          terraform_wrapper: false   # raw exit codes/output for -detailed-exitcode
+
+      - name: Write credentials (OCI key + public SSH key)
+        env:
+          TF_PRIVATE_KEY: ${{ secrets.TF_PRIVATE_KEY }}
+          TF_SSH_PUBLIC_KEY: ${{ secrets.TF_SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p ~/.oci ~/.ssh
+          printf '%s\n' "$TF_PRIVATE_KEY" > ~/.oci/ci_key.pem
+          printf '%s\n' "$TF_SSH_PUBLIC_KEY" > ~/.ssh/id_ed25519.pub
+          chmod 700 ~/.ssh && chmod 600 ~/.oci/ci_key.pem && chmod 644 ~/.ssh/id_ed25519.pub
+
+      - name: terraform fmt -check
+        working-directory: infra/terraform
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform init (HCP remote state, takes the lock)
+        working-directory: infra/terraform
+        run: terraform init -input=false -no-color
+
+      - name: terraform plan
+        id: plan
+        working-directory: infra/terraform
+        env:
+          TF_VAR_private_key_path: ~/.oci/ci_key.pem
+          TF_VAR_ssh_public_key_path: ~/.ssh/id_ed25519.pub
+        run: |
+          set +e
+          terraform plan -no-color -detailed-exitcode -out=tfplan | tee plan.txt
+          code=${PIPESTATUS[0]}
+          echo "plan exit code: $code (0 = no changes, 2 = changes proposed)"
+          if [ "$code" = "1" ]; then
+            echo "::error::terraform plan failed"
+            exit 1
+          fi
+          exit 0
+
+      - name: Publish plan to job summary
+        if: always()
+        working-directory: infra/terraform
+        run: |
+          {
+            echo "### \`terraform plan\` — infra/terraform"
+            echo ""
+            echo '```hcl'
+            if [ -f plan.txt ]; then
+              cat plan.txt
+            else
+              echo "(plan produced no output — see the job log)"
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload plan artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: terraform-plan
+          path: |
+            infra/terraform/tfplan
+            infra/terraform/plan.txt
+          retention-days: 7
+          if-no-files-found: ignore
