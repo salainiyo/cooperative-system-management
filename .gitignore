@@ -1,0 +1,19 @@
+# Databases (never commit real user data / password hashes)
+coop_db/
+*.db
+*.sqlite3
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+
+# Python
+__pycache__/
+.venv/
+.pytest_cache/
+*.pyc

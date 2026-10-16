@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { User, Phone, MapPin, Calendar, Wallet, TrendingUp, ArrowLeft, Plus, Edit2, Trash2, AlertCircle, CheckCircle, History } from 'lucide-react';
+import { User, Phone, MapPin, Calendar, Wallet, TrendingUp, ArrowLeft, Plus, Edit2, Trash2, AlertCircle, CheckCircle, History, FileText } from 'lucide-react';
 import { api } from '../api';
 import { useToast } from '../context/ToastContext';
 import AddSavingsModal from './AddSavingsModal';
 import IssueLoanModal from './IssueLoanModal';
 import MakePaymentModal from './MakePaymentModal';
 import EditMemberModal from './EditMemberModal';
+import PortalAccessCard from './PortalAccessCard';
+import MemberStatement from './MemberStatement';
+import { useConfirm } from './ui/ConfirmDialog';
+import { formatMoney } from '../utils/format';
 
-const formatMoney = (amount) => parseFloat(amount || 0).toLocaleString('en-RW', { maximumFractionDigits: 0 });
 const formatDateTime = (dateString) => {
   if (!dateString) return 'N/A';
   return new Date(dateString).toLocaleDateString('en-RW', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -18,6 +21,7 @@ export default function MemberProfile() {
   const { memberId } = useParams();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const [confirm, confirmDialog] = useConfirm();
   
   const [member, setMember] = useState(null);
   const [savingsHistory, setSavingsHistory] = useState([]);
@@ -28,6 +32,7 @@ export default function MemberProfile() {
   const [showIssueLoan, setShowIssueLoan] = useState(false);
   const [showMakePayment, setShowMakePayment] = useState(false);
   const [showEditMember, setShowEditMember] = useState(false);
+  const [showStatement, setShowStatement] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState(null);
 
   useEffect(() => { loadMemberDetails(); }, [memberId]);
@@ -45,7 +50,7 @@ export default function MemberProfile() {
   };
 
   const handleDeleteMember = async () => {
-    if (!window.confirm(`Are you sure you want to delete ${member.first_name} ${member.last_name}?`)) return;
+    if (!(await confirm(`Are you sure you want to delete ${member.first_name} ${member.last_name}?`, { danger: true, confirmLabel: 'Delete member' }))) return;
     try {
       await api.deleteMember(memberId);
       showToast('Member deleted successfully');
@@ -54,7 +59,7 @@ export default function MemberProfile() {
   };
 
   const handleDeleteLoan = async (loanId) => {
-    if (!window.confirm('Delete this loan and all payments?')) return;
+    if (!(await confirm('Delete this loan and all its payments? This cannot be undone.', { danger: true, confirmLabel: 'Delete loan' }))) return;
     try {
       await api.deleteLoan(loanId);
       showToast('Loan deleted successfully');
@@ -63,7 +68,7 @@ export default function MemberProfile() {
   };
 
   const handleDeletePayment = async (paymentId) => {
-    if (!window.confirm('Are you sure you want to reverse this payment?')) return;
+    if (!(await confirm('Are you sure you want to reverse this payment?', { danger: true, confirmLabel: 'Reverse payment' }))) return;
     try {
       await api.deletePayment(paymentId);
       showToast('Payment reversed successfully');
@@ -88,7 +93,7 @@ export default function MemberProfile() {
     <div className="space-y-6 animate-fade-in pb-12">
       <div className="flex items-center justify-between">
         <button onClick={() => navigate('/members')} className="btn btn-ghost gap-2"><ArrowLeft className="w-5 h-5" /> Back to Members</button>
-        <div className="flex items-center gap-2"><button onClick={() => setShowEditMember(true)} className="btn btn-ghost gap-2"><Edit2 className="w-4 h-4" /> Edit</button><button onClick={handleDeleteMember} className="btn btn-danger gap-2"><Trash2 className="w-4 h-4" /> Delete Member</button></div>
+        <div className="flex items-center gap-2"><button onClick={() => setShowStatement(true)} className="btn btn-ghost gap-2"><FileText className="w-4 h-4" /> Statement</button><button onClick={() => setShowEditMember(true)} className="btn btn-ghost gap-2"><Edit2 className="w-4 h-4" /> Edit</button><button onClick={handleDeleteMember} className="btn btn-danger gap-2"><Trash2 className="w-4 h-4" /> Delete Member</button></div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -98,6 +103,7 @@ export default function MemberProfile() {
             <div className="space-y-3 text-sm"><div className="flex items-center gap-3 text-slate-300"><Phone className="w-4 h-4 text-slate-500" /><span>{member.phone_number}</span></div><div className="flex items-center gap-3 text-slate-300"><Calendar className="w-4 h-4 text-slate-500" /><span>Born {formatDateTime(member.date_of_birth).split(',')[0]}</span></div><div className="flex items-center gap-3 text-slate-300"><User className="w-4 h-4 text-slate-500" /><span>{member.gender}</span></div><div className="flex items-center gap-3 text-slate-300"><MapPin className="w-4 h-4 text-slate-500" /><span>Joined {formatDateTime(member.created_at).split(',')[0]}</span></div></div>
           </div>
           <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl p-6 text-white shadow-lg"><div className="flex items-center gap-3 mb-4"><Wallet className="w-6 h-6" /><h3 className="text-lg font-semibold">Total Savings</h3></div><p className="text-4xl font-bold mb-2">{formatMoney(member.total_savings)} RWF</p><p className="text-emerald-100 text-sm">Available for loans</p></div>
+          <PortalAccessCard member={member} onChanged={loadMemberDetails} />
           <div className="space-y-2"><button onClick={() => setShowAddSavings(true)} className="btn btn-success w-full gap-2"><Plus className="w-5 h-5" /> Add Savings</button><button onClick={() => setShowIssueLoan(true)} className="btn btn-primary w-full gap-2" disabled={member.active_loans?.length >= 1}><Plus className="w-5 h-5" /> Issue New Loan</button></div>
         </div>
 
@@ -149,7 +155,15 @@ export default function MemberProfile() {
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-950/80 text-slate-400 uppercase text-xs tracking-wider sticky top-0 backdrop-blur-md"><tr><th className="px-5 py-3">Date & Time</th><th className="px-5 py-3 text-right">Amount</th></tr></thead>
                 <tbody className="divide-y divide-slate-800/50">
-                  {savingsHistory.length > 0 ? (savingsHistory.map((s) => (<tr key={s.id} className="hover:bg-slate-800/30 transition-colors"><td className="px-5 py-4 text-slate-300">{formatDateTime(s.created_at || s.updated_at)}</td><td className="px-5 py-4 text-right font-semibold text-emerald-400">+{formatMoney(s.amount)} RWF</td></tr>))) : (<tr><td colSpan="2" className="px-5 py-12 text-center text-slate-500 italic">No savings deposits recorded.</td></tr>)}
+                  {savingsHistory.length > 0 ? (savingsHistory.map((s) => {
+                    const isWithdrawal = s.transaction_type === 'withdrawal';
+                    return (
+                      <tr key={s.id} className="hover:bg-slate-800/30 transition-colors">
+                        <td className="px-5 py-4 text-slate-300">{formatDateTime(s.created_at || s.updated_at)}<span className="block text-xs text-slate-500 capitalize">{s.transaction_type || 'deposit'}</span></td>
+                        <td className={`px-5 py-4 text-right font-semibold ${isWithdrawal ? 'text-amber-400' : 'text-emerald-400'}`}>{isWithdrawal ? '−' : '+'}{formatMoney(s.amount)} RWF</td>
+                      </tr>
+                    );
+                  })) : (<tr><td colSpan="2" className="px-5 py-12 text-center text-slate-500 italic">No savings transactions recorded.</td></tr>)}
                 </tbody>
               </table>
             </div>
@@ -172,6 +186,8 @@ export default function MemberProfile() {
       {showIssueLoan && <IssueLoanModal member={member} onClose={() => setShowIssueLoan(false)} onSuccess={handleActionSuccess} />}
       {showMakePayment && selectedLoan && <MakePaymentModal loan={selectedLoan} onClose={() => { setShowMakePayment(false); setSelectedLoan(null); }} onSuccess={handleActionSuccess} />}
       {showEditMember && <EditMemberModal member={member} onClose={() => setShowEditMember(false)} onSuccess={() => { showToast('Profile updated!'); handleActionSuccess(); }} />}
+      {showStatement && <MemberStatement member={member} onClose={() => setShowStatement(false)} />}
+      {confirmDialog}
     </div>
   );
 }

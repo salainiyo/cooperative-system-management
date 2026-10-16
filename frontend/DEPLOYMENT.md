@@ -1,3 +1,5 @@
+> **Note (2026):** this guide predates the current Docker Compose + Caddy deployment and the member portal / SMTP / reports features. See the repository root `README.md` for the authoritative architecture and deployment guide.
+
 # Deployment Guide
 
 Complete guide for deploying the Cooperative Management System frontend to production.

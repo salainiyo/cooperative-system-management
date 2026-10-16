@@ -9,8 +9,10 @@ if not database_url:
     logger.critical("Database not loaded. Check enironment variable")
     raise ValueError("Check the environment variable")
 
-connect_args={"check_same_thread":False}
-engine = create_engine(database_url, connect_args=connect_args)
+# SQLite needs a single shared connection across FastAPI's worker threads;
+# PostgreSQL (and other servers) use the normal pool instead.
+connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
+engine = create_engine(database_url, connect_args=connect_args, pool_pre_ping=True)
 
 def get_session():
     with Session(engine) as session:

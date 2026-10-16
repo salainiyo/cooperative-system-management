@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { X, DollarSign, AlertCircle, Loader2 } from 'lucide-react';
 import { api } from '../api';
 import { useToast } from '../context/ToastContext';
+import { formatMoney } from '../utils/format';
+import Modal from './ui/Modal';
 
-const formatMoney = (amount) => parseFloat(amount || 0).toLocaleString('en-RW', { maximumFractionDigits: 0 });
 
 export default function MakePaymentModal({ loan, onClose, onSuccess }) {
   const [amount, setAmount] = useState('');
@@ -46,8 +47,7 @@ export default function MakePaymentModal({ loan, onClose, onSuccess }) {
   const breakdown = getPaymentBreakdown();
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content max-w-2xl" onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onClose} className="max-w-2xl">
         <div className="flex justify-between mb-6">
           <div className="flex gap-3"><div className="w-10 h-10 bg-emerald-500 rounded-lg flex items-center justify-center"><DollarSign className="w-5 h-5 text-white" /></div><div><h2 className="text-xl font-bold text-slate-100">Make Payment</h2><p className="text-slate-400 text-sm">Loan #{loan.id}</p></div></div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-200"><X className="w-6 h-6" /></button>
@@ -82,7 +82,6 @@ export default function MakePaymentModal({ loan, onClose, onSuccess }) {
 
           <div className="flex gap-3 pt-4"><button type="submit" disabled={loading || !amount} className="btn btn-success flex-1">{loading ? <Loader2 className="animate-spin mx-auto" size={18}/> : 'Record Payment'}</button><button type="button" onClick={onClose} className="btn btn-ghost">Cancel</button></div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

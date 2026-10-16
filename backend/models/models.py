@@ -6,6 +6,7 @@ from dateutil.relativedelta import relativedelta
 from pydantic import BaseModel, computed_field
 from sqlmodel import Field, Relationship, SQLModel
 
+from core.settings_cache import get_interest_rate, get_late_fee_rate
 from dependancies.dependancies import utc_now
 
 # 1. PAYMENT MODELS
@@ -37,7 +38,7 @@ class Payments(BasePayments, table=True):
 
 class CreatePayments(SQLModel):
     # The frontend just sends the total cash amount the user is handing over
-    amount: Decimal = Field(max_digits=12, decimal_places=2)
+    amount: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
 
 
 class PublicPayments(BasePayments):
@@ -45,7 +46,7 @@ class PublicPayments(BasePayments):
     loan_id: int
 
 class PaymentUpdate(SQLModel):
-    amount: Decimal|None
+    amount: Decimal | None = Field(default=None, gt=0)
 
 class PaymentDelete(SQLModel):
     member_names: str
@@ -55,9 +56,9 @@ class PaymentDelete(SQLModel):
 # 2. LOAN MODELS
 
 class BaseLoan(SQLModel):
-    amount: Decimal = Field(max_digits=12, decimal_places=2)
+    amount: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
     monthly_payment: Decimal = Field(
-        max_digits=12, decimal_places=2, description="Agreed monthly installment"
+        max_digits=12, decimal_places=2, gt=0, description="Agreed monthly installment"
     )
 
 
@@ -84,11 +85,11 @@ class Loan(BaseLoan, table=True):
 
     @property
     def current_interest_due(self) -> Decimal:
-        """Calculates the 1.5% interest on the exact remaining balance."""
+        """Calculates the configured interest rate on the exact remaining balance."""
         if self.status == "paid" or self.remaining_balance <= Decimal("0.00"):
             return Decimal("0.00")
 
-        interest = self.remaining_balance * Decimal("0.015")
+        interest = self.remaining_balance * get_interest_rate()
         return round(interest, 2)
 
     @property
@@ -110,7 +111,7 @@ class Loan(BaseLoan, table=True):
 
     @property
     def accumulated_late_fees(self) -> Decimal:
-        """Calculates the 3% late penalty based on missed monthly payments."""
+        """Calculates the configured late penalty based on missed monthly payments."""
         if self.status == "paid" or not self.next_due_date:
             return Decimal("0.00")
 
@@ -124,7 +125,7 @@ class Loan(BaseLoan, table=True):
 
             if months_late > 0:
                 penalty = (
-                    self.monthly_payment * Decimal("0.03") * Decimal(str(months_late))
+                    self.monthly_payment * get_late_fee_rate() * Decimal(str(months_late))
                 )
                 return round(penalty, 2)
 
@@ -145,8 +146,8 @@ class PublicLoan(BaseLoan):
     approved_at: datetime
     
 class LoanUpdate(SQLModel):
-    amount: Decimal
-    monthly_payment: Decimal
+    amount: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
+    monthly_payment: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
     
 class LoanDelete(SQLModel):
     member: str
@@ -171,23 +172,27 @@ class LoanWithPayments(BaseLoan):
 
 #Savings models
 class MemberSaving(SQLModel):
-    amount: Decimal
+    amount: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
+    transaction_type: str = Field(default="deposit", max_length=12)  # deposit | withdrawal
     
 class Savings(MemberSaving, table=True):
     id : int|None = Field(default=None, primary_key=True)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now, sa_column_kwargs={"onupdate":utc_now})
+    balance_after: Optional[Decimal] = Field(default=None, max_digits=14, decimal_places=2)
     member_id: int|None = Field(default=None, foreign_key="member.id")
     member: Optional["Member"] = Relationship(back_populates="savings")
     
 class SavingsRead(MemberSaving):
     id : int
     amount: Decimal
+    transaction_type: str = "deposit"
+    balance_after: Optional[Decimal] = None
     created_at: datetime
     updated_at: datetime
     
 class SavingsUpdate(SQLModel):
-    amount: int|None = None
+    amount: Decimal | None = Field(default=None, max_digits=12, decimal_places=2, gt=0)
     
 class SavingsDelete(SQLModel):
     member: str
@@ -209,6 +214,10 @@ class MemberCreate(MemberBase):
 
 class Member(MemberBase, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Login account for the member portal (null = no portal access yet).
+    user_id: Optional[int] = Field(
+        default=None, foreign_key="user.id", unique=True, index=True
+    )
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(
         default_factory=utc_now, sa_column_kwargs={"onupdate": utc_now}
@@ -220,11 +229,17 @@ class Member(MemberBase, table=True):
     
     @property
     def total_savings(self):
-        return sum((s.amount for s in self.savings), Decimal("0.00"))
+        """Net balance: deposits minus withdrawals."""
+        balance = Decimal("0.00")
+        for s in self.savings:
+            amount = s.amount if s.transaction_type != "withdrawal" else -s.amount
+            balance += amount
+        return balance
 
 
 class MemberPublic(MemberBase):
     id: int
+    user_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     
@@ -255,3 +270,46 @@ class AdminDashboardStats(BaseModel):
     total_interest_collected: Decimal
     outstanding_principal: Decimal
     projected_late_fees: Decimal
+
+
+# ==========================================
+# LOAN REQUESTS (member-initiated workflow)
+# ==========================================
+class LoanRequest(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    member_id: int = Field(foreign_key="member.id", index=True)
+    amount: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
+    monthly_payment: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
+    purpose: Optional[str] = Field(default=None, max_length=255)
+    status: str = Field(default="pending", index=True)  # pending | approved | rejected
+    requested_at: datetime = Field(default_factory=utc_now)
+    decided_at: Optional[datetime] = Field(default=None)
+    decided_by: Optional[int] = Field(default=None)  # user.id of the admin
+    decision_note: Optional[str] = Field(default=None, max_length=500)
+    loan_id: Optional[int] = Field(default=None, foreign_key="loan.id")
+
+    member: Optional["Member"] = Relationship()
+
+
+class LoanRequestCreate(SQLModel):
+    amount: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
+    monthly_payment: Decimal = Field(max_digits=12, decimal_places=2, gt=0)
+    purpose: Optional[str] = Field(default=None, max_length=255)
+
+
+class LoanRequestPublic(SQLModel):
+    id: int
+    member_id: int
+    amount: Decimal
+    monthly_payment: Decimal
+    purpose: Optional[str] = None
+    status: str
+    requested_at: datetime
+    decided_at: Optional[datetime] = None
+    decision_note: Optional[str] = None
+    loan_id: Optional[int] = None
+    member_name: Optional[str] = None
+
+
+class LoanRequestDecision(SQLModel):
+    note: Optional[str] = Field(default=None, max_length=500)

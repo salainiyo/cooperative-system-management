@@ -1,18 +1,33 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { User, Phone, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { User, Phone, ChevronLeft, ChevronRight, Plus, Download, Loader2 } from 'lucide-react';
 import { api } from '../api';
+import { useToast } from '../context/ToastContext';
 import AddMemberModal from './AddMemberModal';
+import { formatMoney } from '../utils/format';
 
-const formatMoney = (amount) => parseFloat(amount || 0).toLocaleString('en-RW', { maximumFractionDigits: 0 });
 
 export default function MembersDirectory() {
+  const { showToast } = useToast();
   const [members, setMembers] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [offset, setOffset] = useState(0);
   const [limit] = useState(20);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      await api.downloadCsv('members');
+      showToast('Members CSV downloaded');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   useEffect(() => { loadMembers(); }, [offset]);
 
@@ -44,9 +59,14 @@ export default function MembersDirectory() {
           <h1 className="text-3xl font-bold text-slate-100 mb-2">Members Directory</h1>
           <p className="text-slate-400">{totalCount} total members registered</p>
         </div>
-        <button onClick={() => setShowAddModal(true)} className="btn btn-primary gap-2">
-          <Plus className="w-5 h-5" /> Add New Member
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={handleExport} disabled={exporting} className="btn btn-ghost gap-2">
+            {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} Export CSV
+          </button>
+          <button onClick={() => setShowAddModal(true)} className="btn btn-primary gap-2">
+            <Plus className="w-5 h-5" /> Add New Member
+          </button>
+        </div>
       </div>
 
       {loading ? (

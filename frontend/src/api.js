@@ -1,4 +1,4 @@
-const API_BASE = 'https://ikimina.duckdns.org/api';
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
@@ -98,6 +98,37 @@ export const api = {
     }
   },
   getCurrentUser: () => fetchWithAuth('/auth/me'),
+  forgotPassword: async (email) => {
+    const response = await fetch(`${API_BASE}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Request failed');
+    return data;
+  },
+  resetPassword: async (token, newPassword) => {
+    const response = await fetch(`${API_BASE}/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || 'Request failed');
+    return data;
+  },
+  changePassword: async (currentPassword, newPassword) => {
+    const data = await fetchWithAuth('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+    // The server rotates tokens so the user stays signed in with the new password.
+    if (data.access_token && data.refresh_token) {
+      tokenManager.setTokens(data.access_token, data.refresh_token);
+    }
+    return data;
+  },
   searchMembers: (query) => fetchWithAuth(`/member/search?q=${encodeURIComponent(query)}`),
   getMembers: (offset = 0, limit = 20) => fetchWithAuth(`/member/?offset=${offset}&limit=${limit}`),
   getMemberDetails: (memberId) => fetchWithAuth(`/member/${memberId}`),
@@ -115,4 +146,65 @@ export const api = {
   updatePayment: (paymentId, updateData) => fetchWithAuth(`/payment/${paymentId}`, { method: 'PATCH', body: JSON.stringify(updateData) }), // Fixed
   deletePayment: (paymentId) => fetchWithAuth(`/payment/${paymentId}`, { method: 'DELETE' }), // Fixed
   getDashboardStats: () => fetchWithAuth('/admin/dashboard-stats'),
+  getSettings: () => fetchWithAuth('/admin/settings/'),
+  updateSettings: (settingsData) => fetchWithAuth('/admin/settings/', { method: 'PATCH', body: JSON.stringify(settingsData) }),
+  sendTestEmail: (email) => fetchWithAuth('/admin/settings/test-email', { method: 'POST', body: JSON.stringify(email ? { email } : {}) }),
+  // Member portal
+  getPortalAccount: () => fetchWithAuth('/portal/account'),
+  getPortalSavings: (skip = 0, limit = 20) => fetchWithAuth(`/portal/savings?skip=${skip}&limit=${limit}`),
+  getPortalLoans: () => fetchWithAuth('/portal/loans'),
+  getLoanEligibility: () => fetchWithAuth('/portal/loan-eligibility'),
+  createLoanRequest: (data) => fetchWithAuth('/portal/loan-requests', { method: 'POST', body: JSON.stringify(data) }),
+  getMyLoanRequests: () => fetchWithAuth('/portal/loan-requests'),
+  // Admin: loan request queue
+  getLoanRequests: (statusFilter) => fetchWithAuth(`/admin/loan-requests${statusFilter ? `?status=${statusFilter}` : ''}`),
+  approveLoanRequest: (id, note) => fetchWithAuth(`/admin/loan-requests/${id}/approve`, { method: 'POST', body: JSON.stringify({ note: note || null }) }),
+  rejectLoanRequest: (id, note) => fetchWithAuth(`/admin/loan-requests/${id}/reject`, { method: 'POST', body: JSON.stringify({ note: note || null }) }),
+  // Admin: member portal accounts
+  createMemberAccount: (memberId, email, tempPassword) => fetchWithAuth('/admin/member-accounts', { method: 'POST', body: JSON.stringify({ member_id: memberId, email, temp_password: tempPassword || null }) }),
+  revokeMemberPassword: (memberId) => fetchWithAuth(`/admin/member-accounts/${memberId}/revoke-password`, { method: 'POST' }),
+  deleteMemberAccount: (memberId) => fetchWithAuth(`/admin/member-accounts/${memberId}`, { method: 'DELETE' }),
+  getUsers: () => fetchWithAuth('/admin/users'),
+  // Reports & exports
+  getCollectionsReport: () => fetchWithAuth('/admin/reports/collections'),
+  getPortfolioReport: () => fetchWithAuth('/admin/reports/portfolio'),
+  getTimeseries: (months = 12) => fetchWithAuth(`/admin/dashboard/timeseries?months=${months}`),
+  getPeriodDeltas: () => fetchWithAuth('/admin/dashboard/period-deltas'),
+  getMemberStatement: (memberId, from, to) =>
+    fetchWithAuth(`/admin/members/${memberId}/statement${from ? `?from=${from}&to=${to}` : ''}`),
+  getLoanList: (params = {}) => {
+    const query = new URLSearchParams();
+    if (params.status) query.set('status', params.status);
+    if (params.member_id) query.set('member_id', params.member_id);
+    if (params.offset != null) query.set('offset', params.offset);
+    if (params.limit != null) query.set('limit', params.limit);
+    const qs = query.toString();
+    return fetchWithAuth(`/loan/${qs ? `?${qs}` : ''}`);
+  },
+  getLoanDetail: (loanId) => fetchWithAuth(`/loan/${loanId}`),
+  downloadCsv: async (dataset) => {
+    let accessToken = tokenManager.getAccessToken();
+    let response = await fetch(`${API_BASE}/admin/export/${dataset}.csv`, {
+      headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    });
+    if (response.status === 401) {
+      accessToken = await refreshAccessToken();
+      response = await fetch(`${API_BASE}/admin/export/${dataset}.csv`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    }
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Export failed' }));
+      throw new Error(errorData.detail || `HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${dataset}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
 };

@@ -8,6 +8,7 @@ from sqlmodel import Session, col, func, or_, select
 
 from core.app_logging import logger
 from core.rate_limiting import limiter
+from core.settings_cache import get_interest_rate, get_loan_savings_multiplier
 from db.database import get_session
 from dependancies.admin_auth import admin_required
 from models.models import (
@@ -17,6 +18,7 @@ from models.models import (
     LoanUpdate,
     LoanDelete,
     Loan,
+    LoanWithPayments,
     Member,
     MemberCreate,
     MemberDetailed,
@@ -41,6 +43,21 @@ loan_router = APIRouter(prefix="/loan")
 payment_router = APIRouter(prefix="/payment")
 admin_router = APIRouter(prefix="/admin", tags=["Admin Dashboard"])
 savings_router = APIRouter(prefix="/savings")
+
+
+def _recalculate_savings_balances(session: Session, member_id: int) -> None:
+    """Replays a member's savings history in order and stores balance_after on each row."""
+    rows = session.exec(
+        select(Savings)
+        .where(Savings.member_id == member_id)
+        .order_by(col(Savings.created_at).asc(), col(Savings.id).asc())  # type: ignore
+    ).all()
+    balance = Decimal("0.00")
+    for row in rows:
+        signed = row.amount if row.transaction_type != "withdrawal" else -row.amount
+        balance += signed
+        row.balance_after = balance
+        session.add(row)
 
 
 # ==========================================
@@ -197,7 +214,8 @@ def get_member_detailed(
         member, update={"active_loans": active, "completed_loans": completed}
     )
     
-@member_router.patch("/update/{member_id}", response_model=MemberPublic, status_code=status.HTTP_200_OK)
+@member_router.patch("/{member_id}", response_model=MemberPublic, status_code=status.HTTP_200_OK)
+@member_router.patch("/update/{member_id}", response_model=MemberPublic, status_code=status.HTTP_200_OK, include_in_schema=False)
 @limiter.limit("3/minute")
 async def update_member(
     request: Request,
@@ -338,17 +356,44 @@ async def record_savings(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Member not found"
         )
-        
-    # 2. Bind the deposit to the member
-    new_savings = Savings.model_validate(savings_data, update={"member_id": member_id})
+
+    transaction_type = savings_data.transaction_type or "deposit"
+    if transaction_type not in ("deposit", "withdrawal"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="transaction_type must be 'deposit' or 'withdrawal'.",
+        )
+
+    # Withdrawals cannot exceed the member's current balance.
+    if transaction_type == "withdrawal":
+        available = db_member.total_savings
+        if available <= Decimal("0.00"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Member has no savings balance to withdraw from.",
+            )
+        if savings_data.amount > available:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Withdrawal exceeds the available balance of {available}.",
+            )
+
+    # 2. Bind the deposit/withdrawal to the member
+    new_savings = Savings.model_validate(
+        savings_data, update={"member_id": member_id, "transaction_type": transaction_type}
+    )
     
     # 3. Save to database safely
     try:
         session.add(new_savings)
+        session.flush()
+        _recalculate_savings_balances(session, member_id)
         session.commit()
         session.refresh(new_savings)
         
-        logger.info(f"Successfully recorded a {new_savings.amount} deposit for Member #{member_id}.")
+        logger.info(
+            f"Successfully recorded a {transaction_type} of {new_savings.amount} for Member #{member_id}."
+        )
         return new_savings
         
     except IntegrityError:
@@ -436,6 +481,10 @@ async def update_savings(
         db_savings.sqlmodel_update(update_data)
         
         session.add(db_savings)
+        session.flush()
+        if db_savings.member_id:
+            # Amount changed → every later balance_after shifts too.
+            _recalculate_savings_balances(session, db_savings.member_id)
         session.commit()
         session.refresh(db_savings)
         
@@ -482,11 +531,15 @@ async def delete_savings(
     full_name = f"{first_name} {last_name}"
     
     amount_deleted = db_savings.amount
+    member_id = db_savings.member_id
     
     response_data = SavingsDelete(member=full_name, amount=amount_deleted)
 
     try:
         session.delete(db_savings)
+        session.flush()
+        if member_id:
+            _recalculate_savings_balances(session, member_id)
         session.commit()
         
         logger.info(f"Successfully deleted {amount_deleted} RWF savings record #{savings_id} for {full_name}.")
@@ -503,6 +556,98 @@ async def delete_savings(
 # ==========================================
 # LOAN ROUTES
 # ==========================================
+@loan_router.get("/", response_model=Dict[str, Any])
+@limiter.limit("20/minute")
+async def list_loans(
+    request: Request,
+    status_filter: str | None = Query(default=None, alias="status", description="active|paid"),
+    member_id: int | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, le=100),
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required),
+):
+    """Paginated list of all loans (optionally filtered by status or member)."""
+    filters = []
+    if status_filter:
+        filters.append(Loan.status == status_filter)
+    if member_id:
+        filters.append(Loan.member_id == member_id)
+
+    count_statement = select(func.count(Loan.id))
+    list_statement = (
+        select(Loan).options(selectinload(Loan.member), selectinload(Loan.payments))  # type: ignore
+    )
+    if filters:
+        count_statement = count_statement.where(*filters)
+        list_statement = list_statement.where(*filters)
+
+    total_count = session.exec(count_statement).one() or 0
+    loans = session.exec(
+        list_statement.order_by(col(Loan.id).desc()).offset(offset).limit(limit)
+    ).all()
+
+    return {
+        "loans": [
+            {
+                **PublicLoan.model_validate(loan).model_dump(),
+                "status": loan.status,
+                "member_name": f"{loan.member.first_name} {loan.member.last_name}" if loan.member else None,
+                "payments_count": len(loan.payments or []),
+            }
+            for loan in loans
+        ],
+        "total_count": total_count,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+@loan_router.get("/{loan_id}", response_model=LoanWithPayments)
+@limiter.limit("20/minute")
+async def get_loan_detail(
+    request: Request,
+    loan_id: int,
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required),
+):
+    statement = (
+        select(Loan)
+        .where(Loan.id == loan_id)
+        .options(selectinload(Loan.payments), selectinload(Loan.member))  # type: ignore
+    )
+    db_loan = session.exec(statement).first()
+    if not db_loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    return db_loan
+
+
+@loan_router.get("/{loan_id}/payments", response_model=Dict[str, Any])
+@limiter.limit("20/minute")
+async def list_loan_payments(
+    request: Request,
+    loan_id: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, le=100),
+    session: Session = Depends(get_session),
+    admin: User = Depends(admin_required),
+):
+    if not session.get(Loan, loan_id):
+        raise HTTPException(status_code=404, detail="Loan not found")
+
+    total_count = session.exec(
+        select(func.count(Payments.id)).where(Payments.loan_id == loan_id)
+    ).one() or 0
+    payments = session.exec(
+        select(Payments)
+        .where(Payments.loan_id == loan_id)
+        .order_by(col(Payments.paid_at).desc())
+        .offset(offset)
+        .limit(limit)
+    ).all()
+    return {"payments": payments, "total_count": total_count, "offset": offset, "limit": limit}
+
+
 @loan_router.post("/{member_id}", response_model=PublicLoan, status_code=201)
 @limiter.limit("5/minute")
 async def register_loan(
@@ -531,7 +676,7 @@ async def register_loan(
             status_code=400, detail="Member has no savings account balance."
         )
 
-    max_loan_allowed = db_member.total_savings * Decimal("2.00")
+    max_loan_allowed = db_member.total_savings * get_loan_savings_multiplier()
     if loan_data.amount > max_loan_allowed:
         raise HTTPException(
             status_code=400,
@@ -569,19 +714,50 @@ async def update_loan(
 ):
     logger.info(f"Admin {admin.email} is attempting to update Loan #{loan_id}")
 
-    db_loan = session.get(Loan, loan_id)
+    statement = (
+        select(Loan)
+        .where(Loan.id == loan_id)
+        .options(selectinload(Loan.payments), selectinload(Loan.member).selectinload(Member.savings))  # type: ignore
+    )
+    db_loan = session.exec(statement).first()
     if not db_loan:
         logger.warning(f"Update failed: Loan #{loan_id} not found.")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Loan not found"
         )
-        
+
+    if db_loan.payments:
+        logger.warning(
+            f"Update blocked: Loan #{loan_id} already has {len(db_loan.payments)} payment(s)."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot modify a loan that already has recorded payments. "
+                    "Delete the payments first if this is a correction.",
+        )
+
     loan_data = update_loan_data.model_dump(exclude_unset=True)
-    
+
     if not loan_data:
         logger.info(f"No new data provided for Loan #{loan_id}. Skipping commit.")
         return db_loan
+
+    # Re-validate the same business rules used at issuance.
+    if db_loan.monthly_payment > db_loan.amount:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Monthly payment cannot exceed the loan amount.",
+        )
+
+    member = db_loan.member
+    if member:
+        max_loan_allowed = member.total_savings * get_loan_savings_multiplier()
+        if db_loan.amount > max_loan_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Loan exceeds limit. Maximum allowed based on savings is {max_loan_allowed}.",
+            )
 
     try:
         db_loan.sqlmodel_update(loan_data)
@@ -631,6 +807,16 @@ async def delete_loan(
     full_name = f"{first_name} {last_name}"
     
     payments_made = len(db_loan.payments) if db_loan.payments else 0
+    if payments_made > 0:
+        logger.error(
+            f"Deletion blocked: Loan #{loan_id} has {payments_made} recorded payment(s)."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete a loan with recorded payments. "
+                    "Reversing the financial history would corrupt the cooperative's books.",
+        )
+
     loan_amount = db_loan.amount
     remaining_balance = db_loan.remaining_balance
     
@@ -758,7 +944,7 @@ async def update_payment(
     # 2. Reconstruct the "Pre-Payment" mathematical state
     # We find out what the loan looked like mathematically BEFORE this specific payment existed
     pre_payment_principal = loan.remaining_balance + db_payment.principal_amount
-    pre_payment_interest = round(pre_payment_principal * Decimal("0.015"), 2)
+    pre_payment_interest = round(pre_payment_principal * get_interest_rate(), 2)
     pre_payment_late_fees = loan.accumulated_late_fees + db_payment.late_fee_amount
     
     total_clearance_needed = pre_payment_principal + pre_payment_interest + pre_payment_late_fees
@@ -886,8 +1072,14 @@ async def get_dashboard_stats(
         # Members
         total_members = session.exec(select(func.count(Member.id))).one() or 0 #type: ignore
         
-        # THE FIX: Sum the actual 'amount' column from the Savings table
-        total_savings = session.exec(select(func.sum(Savings.amount))).one() or Decimal("0.00")
+        # THE FIX: Sum deposits minus withdrawals (net member savings)
+        total_deposits = session.exec(
+            select(func.sum(Savings.amount)).where(Savings.transaction_type == "deposit")
+        ).one() or Decimal("0.00")
+        total_withdrawals = session.exec(
+            select(func.sum(Savings.amount)).where(Savings.transaction_type == "withdrawal")
+        ).one() or Decimal("0.00")
+        total_savings = total_deposits - total_withdrawals
 
         # Loans
         total_loans_count = session.exec(select(func.count(Loan.id))).one() or 0 #type: ignore

@@ -13,6 +13,20 @@ jobs:
   # ==========================================
   test-backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: coop
+          POSTGRES_PASSWORD: coop
+          POSTGRES_DB: coop_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U coop -d coop_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Grab the code
         uses: actions/checkout@v4
@@ -29,26 +43,82 @@ jobs:
           pip install -r requirements.txt
           pip install pytest httpx
 
-      - name: Run Pytest Suite
+      - name: Run Pytest Suite (SQLite)
         env:
           DATABASE_URL : sqlite:///./test_ci_database.db
           SECRET_KEY : This=is-test-environment-keys-blah-blah
           EXPIRATION_TIME_MINUTES : 30
           EXPIRATION_TIME_DAYS : 3
           ALGORITHM : HS256
-          SENDER_EMAIL : your_email@gmail.com
-          SENDER_PASSWORD : your_16_character_app_password
-          ADMIN_EMAIL : admin_receiving_email@gmail.com
+          ALLOWED_ORIGINS : http://localhost:5173,http://localhost:3000
+          FRONTEND_URL : http://localhost:5173
         run: |
           cd backend
-          pytest -v
+          pytest -q
+
+      - name: Run Pytest Suite (PostgreSQL)
+        env:
+          DATABASE_URL : postgresql+psycopg2://coop:coop@127.0.0.1:5432/coop_test
+          TEST_DATABASE_URL : postgresql+psycopg2://coop:coop@127.0.0.1:5432/coop_test
+          SECRET_KEY : This=is-test-environment-keys-blah-blah
+          EXPIRATION_TIME_MINUTES : 30
+          EXPIRATION_TIME_DAYS : 3
+          ALGORITHM : HS256
+          ALLOWED_ORIGINS : http://localhost:5173,http://localhost:3000
+          FRONTEND_URL : http://localhost:5173
+        run: |
+          cd backend
+          pytest -q
+
+      - name: Verify migrations from scratch (PostgreSQL)
+        env:
+          DATABASE_URL : postgresql+psycopg2://coop:coop@127.0.0.1:5432/coop_test
+          SECRET_KEY : This=is-test-environment-keys-blah-blah
+          EXPIRATION_TIME_MINUTES : 30
+          EXPIRATION_TIME_DAYS : 3
+          ALGORITHM : HS256
+        run: |
+          cd backend
+          alembic upgrade head
+          alembic current
 
   # ==========================================
-  # JOB 2: THE DOCKER FACTORY
+  # JOB 1b: FRONTEND TESTS + BUILD
+  # ==========================================
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Grab the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: |
+          cd frontend
+          npm ci
+
+      - name: Run Vitest Suite
+        run: |
+          cd frontend
+          npm test
+
+      - name: Build
+        run: |
+          cd frontend
+          npm run build
+
+  # ==========================================
+  # JOB 2: BUILD + PUSH IMAGES TO DOCKER HUB
   # ==========================================
   build-and-push:
     # CRITICAL: This tells GitHub to wait for the tests to pass first!
-    needs: test-backend 
+    needs: [test-backend, test-frontend]
     # Only run the build/push if this is a push to main (not just a PR test)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -57,22 +127,68 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v4
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Backend image
-        uses: docker/build-push-action@v5
+      # ---- Backend image ----
+      - name: Backend image metadata
+        id: meta-backend
+        uses: docker/metadata-action@v5
+        with:
+          images: alains04/coop-backend
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=ref,event=tag
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
         with:
           context: ./backend
           push: true
-          tags: alains04/coop-backend:latest
+          tags: ${{ steps.meta-backend.outputs.tags }}
+          labels: ${{ steps.meta-backend.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
 
-      - name: Build and push Frontend image
-        uses: docker/build-push-action@v5
+      # ---- Frontend image ----
+      - name: Frontend image metadata
+        id: meta-frontend
+        uses: docker/metadata-action@v5
+        with:
+          images: alains04/coop-frontend
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=ref,event=tag
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
         with:
           context: ./frontend
           push: true
-          tags: alains04/coop-frontend:latest
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Publish push summary
+        run: |
+          {
+            echo "### Docker Hub images pushed"
+            echo ""
+            echo "| Image | Tags |"
+            echo "|---|---|"
+            echo "| \`alains04/coop-backend\` | \`latest\`, \`sha-${GITHUB_SHA::7}\`, \`main\` |"
+            echo "| \`alains04/coop-frontend\` | \`latest\`, \`sha-${GITHUB_SHA::7}\`, \`main\` |"
+            echo ""
+            echo "Roll back with \`docker pull alains04/coop-backend:sha-${GITHUB_SHA::7}\` and pin that tag in docker-compose.yml."
+          } >> "$GITHUB_STEP_SUMMARY"

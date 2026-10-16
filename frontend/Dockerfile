@@ -2,9 +2,9 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-# Copy package files and install dependencies
+# Copy package files and install dependencies (reproducible versions from the lockfile)
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 # Copy the rest of the frontend code and build it
 COPY . .

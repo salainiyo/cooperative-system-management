@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, LogOut, Search, Menu, X, CalendarClock } from 'lucide-react';
+import { LayoutDashboard, Users, LogOut, Search, Menu, X, CalendarClock, Settings, ClipboardCheck, HandCoins } from 'lucide-react';
 import { api } from '../api';
+import { useConfirm } from './ui/ConfirmDialog';
 import GlobalSearch from './GlobalSearch';
 
 export default function Layout({ user }) {
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [confirm, confirmDialog] = useConfirm();
 
   const handleLogout = async () => {
-    if (window.confirm('Are you sure you want to log out?')) {
+    if (await confirm('Are you sure you want to log out?', { confirmLabel: 'Sign out' })) {
       await api.logout();
     }
   };
@@ -18,6 +20,9 @@ export default function Layout({ user }) {
     { path: '/', icon: LayoutDashboard, label: 'Dashboard' },
     { path: '/members', icon: Users, label: 'Members' },
     { path: '/collections', icon: CalendarClock, label: 'Due Payments' },
+    { path: '/loans', icon: HandCoins, label: 'All Loans' },
+    { path: '/loan-requests', icon: ClipboardCheck, label: 'Loan Requests' },
+    { path: '/settings', icon: Settings, label: 'Settings' },
   ];
 
   return (
@@ -135,6 +140,7 @@ export default function Layout({ user }) {
           <Outlet />
         </main>
       </div>
+      {confirmDialog}
     </div>
   );
 }

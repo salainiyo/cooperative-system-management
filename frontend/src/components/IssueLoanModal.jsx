@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { X, TrendingUp, AlertCircle, Loader2 } from 'lucide-react';
 import { api } from '../api';
 import { useToast } from '../context/ToastContext';
+import { formatMoney } from '../utils/format';
+import Modal from './ui/Modal';
 
-const formatMoney = (amount) => parseFloat(amount || 0).toLocaleString('en-RW', { maximumFractionDigits: 0 });
 
 export default function IssueLoanModal({ member, onClose, onSuccess }) {
   const [formData, setFormData] = useState({ amount: '', monthly_payment: '' });
@@ -52,8 +53,7 @@ export default function IssueLoanModal({ member, onClose, onSuccess }) {
   const estimatedMonths = formData.amount && formData.monthly_payment ? Math.ceil(parseFloat(formData.amount) / parseFloat(formData.monthly_payment)) : 0;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content max-w-2xl" onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onClose} className="max-w-2xl">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3"><div className="w-10 h-10 bg-indigo-500 rounded-lg flex items-center justify-center"><TrendingUp className="w-5 h-5 text-white" /></div><div><h2 className="text-xl font-bold text-slate-100">Issue New Loan</h2><p className="text-slate-400 text-sm">For {member.first_name} {member.last_name}</p></div></div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-200"><X className="w-6 h-6" /></button>
@@ -94,7 +94,6 @@ export default function IssueLoanModal({ member, onClose, onSuccess }) {
 
           <div className="flex items-center gap-3 pt-4"><button type="submit" disabled={loading || warnings.length > 0} className="btn btn-primary flex-1">{loading ? <Loader2 size={18} className="animate-spin mx-auto"/> : 'Issue Loan'}</button><button type="button" onClick={onClose} className="btn btn-ghost">Cancel</button></div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

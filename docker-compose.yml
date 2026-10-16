@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # 1. THE NEW FRONT DOOR (Caddy)
   caddy:
@@ -19,17 +17,33 @@ services:
     container_name: cooperative_redis
     restart: unless-stopped
 
+  # 3. THE DATABASE (PostgreSQL)
+  postgres:
+    image: postgres:16-alpine
+    container_name: cooperative_postgres
+    environment:
+      POSTGRES_USER: coop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coop_secret}
+      POSTGRES_DB: coop
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coop -d coop"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
   backend:
     image: alains04/coop-backend:latest
     container_name: cooperative_backend
     env_file: .env
     environment:
-      # Use the root /data folder
-      - DATABASE_URL=sqlite:////data/users.db
+      - DATABASE_URL=postgresql+psycopg2://coop:${POSTGRES_PASSWORD:-coop_secret}@postgres:5432/coop
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
-    volumes:
-      # Map the persistent volume to the exact same root /data folder
-      - coop_db_data:/data
 
   frontend:
     image: alains04/coop-frontend:latest
@@ -40,4 +54,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
-  coop_db_data: # Registers the new database volume with Docker
+  postgres_data: # PostgreSQL data volume

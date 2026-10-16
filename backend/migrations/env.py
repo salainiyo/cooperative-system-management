@@ -5,8 +5,9 @@ from sqlmodel import SQLModel
 
 from core.app_logging import logger
 from db.database import database_url, engine
-from models.models import Member, Loan, Payments, Savings
-from models.users import User
+from models.models import Member, Loan, LoanRequest, Payments, Savings
+from models.settings import SystemSettings
+from models.users import PasswordResetToken, User
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

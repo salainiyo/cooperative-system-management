@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { X, UserPlus, Loader2 } from 'lucide-react';
 import { api } from '../api';
 import { useToast } from '../context/ToastContext'; 
+import Modal from './ui/Modal';
 
 export default function AddMemberModal({ onClose, onSuccess }) {
   // PERFECTLY MATCHED TO YOUR FASTAPI MODEL
@@ -42,8 +43,7 @@ export default function AddMemberModal({ onClose, onSuccess }) {
   const isFormValid = formData.first_name && formData.last_name && formData.phone_number && formData.gender && formData.date_of_birth;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onClose} className="">
         
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -107,7 +107,6 @@ export default function AddMemberModal({ onClose, onSuccess }) {
             <button type="button" onClick={onClose} className="btn btn-ghost">Cancel</button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

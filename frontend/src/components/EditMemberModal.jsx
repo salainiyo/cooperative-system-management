@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { X, Edit2, Loader2 } from 'lucide-react';
 import { api } from '../api';
+import Modal from './ui/Modal';
 
 export default function EditMemberModal({ member, onClose, onSuccess }) {
   // We extract the YYYY-MM-DD part of the date for the HTML date input
@@ -36,8 +37,7 @@ export default function EditMemberModal({ member, onClose, onSuccess }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+    <Modal onClose={onClose} className="">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -102,7 +102,6 @@ export default function EditMemberModal({ member, onClose, onSuccess }) {
             <button type="button" onClick={onClose} className="btn btn-ghost">Cancel</button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 }

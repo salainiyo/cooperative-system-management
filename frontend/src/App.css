@@ -2,7 +2,6 @@
 
 @tailwind base;
 @tailwind components;
-@tailwind utilities;
 
 * {
   margin: 0;
@@ -123,15 +122,6 @@ textarea:focus-visible {
   }
 }
 
-@keyframes shimmer {
-  0% {
-    background-position: -1000px 0;
-  }
-  100% {
-    background-position: 1000px 0;
-  }
-}
-
 .animate-fade-in {
   animation: fadeIn 0.3s ease-out;
 }
@@ -163,44 +153,6 @@ textarea:focus-visible {
   transform: translateY(-2px);
   box-shadow: var(--shadow-lg);
   border-color: var(--accent-indigo);
-}
-
-/* Loading skeleton */
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--bg-secondary) 0%,
-    var(--bg-tertiary) 50%,
-    var(--bg-secondary) 100%
-  );
-  background-size: 1000px 100%;
-  animation: shimmer 2s infinite;
-  border-radius: 4px;
-}
-
-/* Status badges */
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.25rem 0.75rem;
-  border-radius: 9999px;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-
-.status-active {
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--color-positive);
-}
-
-.status-paid {
-  background: rgba(99, 102, 241, 0.1);
-  color: var(--accent-indigo);
-}
-
-.status-overdue {
-  background: rgba(239, 68, 68, 0.1);
-  color: var(--color-negative);
 }
 
 /* Button styles */
@@ -350,3 +302,29 @@ textarea:focus-visible {
     padding: 1rem;
   }
 }
+
+/* Print styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+  .print-area {
+    position: absolute;
+    inset: 0;
+    max-height: none !important;
+    overflow: visible !important;
+    color: #000;
+    background: #fff;
+    padding: 24px;
+  }
+  .print-hide {
+    display: none !important;
+  }
+}
+
+/* Tailwind utilities last so utility classes (pl-10, py-3, ...) beat component styles. */
+@tailwind utilities;
