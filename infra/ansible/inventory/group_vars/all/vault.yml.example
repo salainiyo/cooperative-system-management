@@ -13,3 +13,14 @@ POSTGRES_PASSWORD: "replace-with-random-password"
 
 # https://www.duckdns.org → your domain's token
 DUCKDNS_TOKEN: "replace-with-duckdns-token"
+
+# Observability (Phase 3) — Prometheus UI basic auth + alertmanager email.
+# OBS_SMTP_PASSWORD: the Gmail app password already configured in the app's
+#   Settings page (same Gmail account; alertmanager sends through it).
+# OBS_UI_PASSWORD_HASH: bcrypt of the Prometheus UI password, generate with
+#   python3 -c "import bcrypt;print(bcrypt.hashpw(b'<password>',bcrypt.gensalt()).decode())"
+OBS_SMTP_USER: "replace-with-smtp-user"
+OBS_SMTP_PASSWORD: "replace-with-gmail-app-password"
+OBS_ALERTS_TO: "replace-with-alert-recipient"
+OBS_UI_USER: "replace-with-ui-user"
+OBS_UI_PASSWORD_HASH: "replace-with-bcrypt-hash"

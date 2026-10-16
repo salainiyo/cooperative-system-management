@@ -18,3 +18,4 @@
     - deploy   # render /srv/coop, pull public images, up -d, health gates
     - duckdns  # keep ikimina.duckdns.org pointed at this instance
     - backup   # daily pg_dump with 7-day rotation
+    - observability  # Prometheus + blackbox probes + email alerts (basic-auth UI)

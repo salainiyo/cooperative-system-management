@@ -6,6 +6,20 @@
 		reverse_proxy cooperative_backend:80
 	}
 
+	handle /prometheus* {
+		basicauth {
+			{{ OBS_UI_USER }} {{ OBS_UI_PASSWORD_HASH }}
+		}
+		reverse_proxy prometheus:9090
+	}
+
+	handle /alertmanager* {
+		basicauth {
+			{{ OBS_UI_USER }} {{ OBS_UI_PASSWORD_HASH }}
+		}
+		reverse_proxy alertmanager:9093
+	}
+
 	handle {
 		reverse_proxy cooperative_frontend:80
 	}

@@ -1,0 +1,83 @@
+---
+# Renders the Prometheus-only monitoring stack into /srv/coop, pulls the
+# pinned images and reconciles the whole compose project (app + monitoring).
+# Hard memory caps in the overlay keep the 1 GB instance within budget.
+- name: Render monitoring configs
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ compose_dir }}/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - { src: docker-compose.observability.yml.j2, dest: docker-compose.observability.yml }
+    - { src: prometheus.yml.j2, dest: prometheus.yml }
+    - { src: alerts.yml.j2, dest: alerts.yml }
+    - { src: alertmanager.yml.j2, dest: alertmanager.yml }
+    - { src: blackbox.yml.j2, dest: blackbox.yml }
+  register: obs_render
+
+- name: Pull monitoring images (public — anonymous pull)
+  ansible.builtin.command: >-
+    docker compose -f docker-compose.yml -f docker-compose.oci.yml
+    -f docker-compose.observability.yml
+    pull prometheus alertmanager node_exporter blackbox_exporter
+  args:
+    chdir: "{{ compose_dir }}"
+  changed_when: false
+
+- name: Start / reconcile the stack (app + monitoring)
+  ansible.builtin.command: >-
+    docker compose -f docker-compose.yml -f docker-compose.oci.yml
+    -f docker-compose.observability.yml up -d --remove-orphans
+  args:
+    chdir: "{{ compose_dir }}"
+  register: obs_up
+  changed_when: >
+    ('Started' in obs_up.stderr) or ('Created' in obs_up.stderr)
+    or ('Recreated' in obs_up.stderr) or ('Removed' in obs_up.stderr)
+    or ('An error occurred' in obs_up.stderr and obs_up.rc != 0)
+
+- name: Restart monitoring containers when a config changed (same inode trap as Caddy —
+    atomic template writes vs single-file bind mounts)
+  ansible.builtin.command: docker restart {{ item }}
+  loop:
+    - prometheus
+    - alertmanager
+    - blackbox_exporter
+  when: obs_render.results | selectattr('changed') | list | length > 0
+
+- name: Verify every monitoring container is running
+  ansible.builtin.shell: |
+    set -eu
+    for c in prometheus alertmanager node_exporter blackbox_exporter; do
+      running=$(docker inspect --format '{% raw %}{{.State.Running}}{% endraw %}' "$c")
+      if [ "$running" != "true" ]; then
+        echo "NOT RUNNING: $c"
+        exit 1
+      fi
+    done
+    echo "all four monitoring containers running"
+  register: obs_check
+  changed_when: false
+
+- name: Wait for Prometheus to report healthy
+  ansible.builtin.command: docker exec prometheus wget --spider -q http://localhost:9090/prometheus/-/healthy
+  register: prom_health
+  until: prom_health.rc == 0
+  retries: 10
+  delay: 5
+  changed_when: false
+
+- name: Verify /prometheus is routed behind basic auth (401 without credentials)
+  # curl --resolve keeps SNI/Host on the real domain while dialing 127.0.0.1:
+  # https://<ip> would send no SNI and Caddy aborts the handshake.
+  ansible.builtin.command: >-
+    curl -sS -o /dev/null -w '%{http_code}'
+    --resolve {{ domain }}:443:127.0.0.1
+    https://{{ domain }}/prometheus
+  register: prom_probe
+  retries: 6
+  delay: 5
+  until: prom_probe.stdout == "401"
+  changed_when: false

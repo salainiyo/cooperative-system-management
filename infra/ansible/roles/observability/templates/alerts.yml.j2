@@ -1,0 +1,104 @@
+groups:
+  - name: instance-health
+    rules:
+      - alert: InstanceHighCpu
+        expr: 100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+{% raw %}
+          summary: "CPU above 80% on {{ $labels.instance }}"
+          description: "1/8 OCPU is being squeezed — {{ $value | humanizePercentage }} idle."
+{% endraw %}
+
+      - alert: InstanceHighMemory
+        expr: 100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+{% raw %}
+          summary: "Memory above 90% on {{ $labels.instance }}"
+          description: "Available: {{ $value | humanize }}% (swap absorbs the rest)."
+{% endraw %}
+
+      - alert: DiskFillingUp
+        expr: 100 * (1 - node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"} / node_filesystem_size_bytes{fstype=~"ext4|xfs|btrfs"}) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+{% raw %}
+          summary: "Disk {{ $labels.mountpoint }} above 85% on {{ $labels.instance }}"
+          description: "{{ $value | humanizePercentage }} used — backups and Docker images accumulate here."
+{% endraw %}
+
+      - alert: SwapPressure
+        expr: 100 * (node_memory_SwapTotal_bytes - node_memory_SwapFree_bytes) / node_memory_SwapTotal_bytes > 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Swap usage above 50%"
+          description: "The 2 GB safety net is wearing thin — the box is over its 1 GB budget."
+
+  - name: availability
+    rules:
+      - alert: ScrapeTargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+{% raw %}
+          summary: "Scrape target {{ $labels.job }} ({{ $labels.instance }}) is down"
+          description: "Prometheus cannot reach the target for 2 minutes."
+{% endraw %}
+
+      - alert: PublicSiteDown
+        expr: probe_success{job="public-site"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "https://ikimina.duckdns.org is not answering"
+          description: "Blackbox probe failed twice in a row — members cannot reach the site."
+
+      - alert: BackendHealthDown
+        expr: probe_success{job="app-health"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Backend /health is failing (API or database down)"
+          description: "The probe hits the API through the Docker network — a 503 usually means PostgreSQL is unavailable."
+
+      - alert: TlsCertExpiringSoon
+        expr: probe_ssl_earliest_cert_expiry{job="public-site"} > 0 and probe_ssl_earliest_cert_expiry{job="public-site"} - time() < 14 * 86400
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "TLS certificate expires in under 14 days"
+          description: "Caddy normally renews automatically — check the caddy_data volume."
+
+  - name: application
+    rules:
+      - alert: BackendHighErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.01 and sum(rate(http_requests_total[5m])) > 0.01
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 1% of API responses are 5xx"
+          description: "Sustained over 10 minutes with real traffic. Check backend logs: docker logs cooperative_backend."
+
+      - alert: BackendLatencyHigh
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 1 and sum(rate(http_requests_total[5m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API p95 latency above 1s"
+          description: "Slow routes over a sustained window — see http_request_duration_seconds by handler."

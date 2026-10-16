@@ -26,6 +26,7 @@
     owner: root
     group: root
     mode: "0644"
+  register: deploy_caddyfile
 
 - name: Render compose overrides (image pin, memory caps, healthchecks)
   ansible.builtin.template:
@@ -50,7 +51,15 @@
   changed_when: false
 
 - name: Start / reconcile the stack
-  ansible.builtin.command: docker compose -f docker-compose.yml -f docker-compose.oci.yml up -d --remove-orphans
+  # Include the observability overlay when it exists so --remove-orphans
+  # doesn't treat the monitoring containers as orphans and bounce them.
+  ansible.builtin.shell: |
+    set -eu
+    files="-f docker-compose.yml -f docker-compose.oci.yml"
+    if [ -f docker-compose.observability.yml ]; then
+      files="$files -f docker-compose.observability.yml"
+    fi
+    docker compose $files up -d --remove-orphans
   args:
     chdir: "{{ compose_dir }}"
   register: compose_up
@@ -58,6 +67,22 @@
     ('Started' in compose_up.stderr) or ('Created' in compose_up.stderr)
     or ('Recreated' in compose_up.stderr) or ('Removed' in compose_up.stderr)
     or ('An error occurred' in compose_up.stderr and compose_up.rc != 0)
+
+- name: Detect Caddy config drift (atomic template writes replace the inode while
+    the single-file bind mount keeps pointing at the old one — md5 across the
+    mount tells us the running file really is the intended one)
+  ansible.builtin.shell: |
+    set -eu
+    host_md5=$(md5sum {{ compose_dir }}/Caddyfile | cut -d' ' -f1)
+    cont_md5=$(docker exec caddy_proxy md5sum /etc/caddy/Caddyfile | cut -d' ' -f1)
+    [ "$host_md5" = "$cont_md5" ]
+  register: caddy_drift
+  changed_when: false
+  failed_when: caddy_drift.rc not in [0, 1]
+
+- name: Restart Caddy when its config drifted
+  ansible.builtin.command: docker restart caddy_proxy
+  when: caddy_drift.rc == 1
 
 - name: Wait for PostgreSQL to report healthy
   ansible.builtin.command: docker inspect --format="{% raw %}{{.State.Health.Status}}{% endraw %}" cooperative_postgres

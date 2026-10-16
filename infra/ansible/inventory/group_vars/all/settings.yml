@@ -16,3 +16,10 @@ image_tag: latest
 # First-boot sizing / housekeeping.
 swap_mb: 2048
 backup_keep_days: 7
+
+# Observability — Prometheus-only stack (no Grafana on 1 GB RAM).
+# UI: https://<domain>/prometheus (basic auth, creds in vault.yml).
+prometheus_retention: 15d
+prometheus_scrape_interval: 30s
+alerts_email: salainiyo2016@gmail.com
+prometheus_ui_user: admin
