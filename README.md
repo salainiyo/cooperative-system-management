@@ -1,7 +1,7 @@
 # Ikimina — Cooperative Financial Management System
 
 [![CI/CD](https://github.com/salainiyo/cooperative-system-management/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/salainiyo/cooperative-system-management/actions/workflows/backend-ci.yml)
-[![tests](https://img.shields.io/badge/tests-85%20passing-brightgreen)](#testing)
+[![tests](https://img.shields.io/badge/tests-87%20passing-brightgreen)](#testing)
 [![demo](https://img.shields.io/badge/live-demo-ikimina.duckdns.org-4c8dff)](https://ikimina.duckdns.org)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
@@ -34,6 +34,7 @@ The demo runs seeded sample data; sign-in credentials available on request.
 - [Testing](#testing)
 - [CI/CD](#cicd-github-actions--docker-hub)
 - [Cloud deployment (Terraform + Ansible)](#cloud-deployment-terraform--ansible)
+- [Observability (Prometheus + alerts)](#observability-prometheus--alerts)
 - [Project structure](#project-structure)
 - [Security](#security)
 - [Roadmap](#roadmap)
@@ -45,9 +46,10 @@ The demo runs seeded sample data; sign-in credentials available on request.
 |---|---|
 | **Production-deployed** | Real HTTPS domain, provisioned by IaC — not just `localhost` |
 | **Money is treated seriously** | Server-side waterfall allocation, ledger-derived balances, configurable rates |
-| **85 automated tests** | 55 pytest (SQLite **and** PostgreSQL) + 30 Vitest/RTL, all in CI |
-| **Full CI/CD** | Tests gate every push; `main` publishes versioned Docker images |
-| **Infrastructure as Code** | Terraform with free-tier guardrails + idempotent Ansible playbook |
+| **87 automated tests** | 57 pytest (SQLite **and** PostgreSQL) + 30 Vitest/RTL, all in CI |
+| **Full CI/CD** | Tests gate every push; `main` publishes versioned Docker images; `infra/terraform` changes get a Terraform plan gate |
+| **Infrastructure as Code** | Terraform with HCP remote state + free-tier guardrails, idempotent Ansible playbook |
+| **Production monitoring** | Prometheus metrics, 10 alert rules and email alerts on the same free VM |
 | **~11,000 lines** | 95 Python/JavaScript source files, MIT-licensed |
 
 ## Live demo
@@ -109,16 +111,24 @@ sample cooperative data (8 members, savings history, active loans, repayments).
 
 ```
 Browser ──HTTPS──▶ Caddy ──/api/* (prefix stripped)──▶ backend (FastAPI, port 80)
-                       └──everything else───────────▶ frontend (Nginx, React SPA)
+                       ├──everything else────────────▶ frontend (Nginx, React SPA)
+                       └──/prometheus*, /alertmanager*▶ monitoring UIs (basic auth)
+
+Prometheus ──scrapes──▶ backend /metrics · node-exporter · blackbox probes
+           ──alerts──▶ Alertmanager ──email──▶ Gmail (app password)
 ```
 
 | Service | Image | Role |
 |---|---|---|
-| `caddy` | caddy:2 | TLS certificates, `/api` reverse proxy, static SPA |
-| `backend` | `alains04/coop-backend` | FastAPI + SQLModel; runs `alembic upgrade head` on start |
+| `caddy` | caddy:2 | TLS certificates, `/api` reverse proxy, static SPA, basic-auth routes for the monitoring UIs |
+| `backend` | `alains04/coop-backend` | FastAPI + SQLModel; runs `alembic upgrade head` on start; `/health` + `/metrics` |
 | `frontend` | `alains04/coop-frontend` | React 18 SPA served by Nginx |
 | `postgres` | postgres:16-alpine | Production database (healthchecked) |
 | `redis` | redis:7-alpine | Rate-limit state |
+| `prometheus` | prom/prometheus | Scrapes app metrics + exporters, 10 alert rules, 15-day retention (capped at 192 MB) |
+| `alertmanager` | prom/alertmanager | Deduplicates alerts and emails them via Gmail SMTP |
+| `node-exporter` | prom/node-exporter | Host CPU / RAM / disk metrics |
+| `blackbox-exporter` | prom/blackbox-exporter | Probes the app's `/health` and the public HTTPS site |
 
 Local development uses SQLite (`DATABASE_URL=sqlite:///./dev.db`) — zero setup,
 same migrations, both engines exercised in CI.
@@ -142,11 +152,11 @@ The domain rules live in the backend and are configurable at runtime
 
 ## Engineering highlights
 
-### Testing — 85 tests, two databases
+### Testing — 87 tests, two databases
 
 ```bash
-# backend: 55 tests (auth, password reset, settings/SMTP, portal, loan
-#          requests, savings/withdrawals, reports & CSV exports)
+# backend: 57 tests (auth, password reset, settings/SMTP, portal, loan
+#          requests, savings/withdrawals, reports & CSV exports, health/metrics)
 cd backend && pytest -q                       # SQLite
 TEST_DATABASE_URL=postgresql+psycopg2://… pytest -q   # PostgreSQL (CI runs both)
 
@@ -167,6 +177,10 @@ only when both pass on `main` — `build-and-push`, which publishes
 `alains04/coop-backend` and `alains04/coop-frontend` to Docker Hub tagged
 `latest`, `sha-<7>`, `main`, and any git tag. **Deploy = pull**, so the
 1 GB server never builds anything.
+
+A second workflow, `terraform-ci.yml`, runs `terraform fmt/init/plan` against
+**HCP remote state** whenever `infra/terraform/` changes and posts the diff to
+the job summary — drift is caught on every push; applies stay local and manual.
 
 ### Security
 
@@ -202,7 +216,9 @@ rotation, automated encrypted backups with 7-day retention.
 | **Financial rules in the DB settings table** | Cooperatives negotiate rates; changing policy must not require a redeploy |
 | **Server-side payment allocation** | Clients can't disagree with the books — the API is the single source of truth |
 | **Terraform variable validations for free tier** | A non-free shape or oversized disk fails at `plan` — you cannot accidentally receive a bill |
+| **HCP Terraform state (free tier)** | Locked, versioned state shared with CI — never on a laptop disk or the managed VM |
 | **Images built in CI, pulled on deploy** | Keeps the 1 GB instance free for the app, and rollbacks are a tag change |
+| **Prometheus-only observability** | Real metrics and alerting on a 1 GB VM without Grafana's memory tax; basic-auth UI is enough for one operator |
 
 ## Getting started
 
@@ -249,7 +265,7 @@ the admin Settings UI and stored encrypted in the database.
 
 | Suite | Count | Covers |
 |---|---|---|
-| `backend/tests` (pytest) | 55 | Auth & RBAC, password reset, SMTP settings, member portal, loan requests, savings/withdrawals, reports & CSV exports, migrations |
+| `backend/tests` (pytest) | 57 | Auth & RBAC, password reset, SMTP settings, member portal, loan requests, savings/withdrawals, reports & CSV exports, `/health` + `/metrics`, migrations |
 | `frontend/src` (Vitest + RTL) | 30 | Formatters, tooltip a11y, confirm dialog, login flow, network-error UX, savings modal, member directory |
 
 Both suites run on every push and PR — see [CI/CD](#cicd-github-actions--docker-hub).
@@ -258,16 +274,19 @@ Both suites run on every push and PR — see [CI/CD](#cicd-github-actions--docke
 
 | Job | When | What it does |
 |---|---|---|
-| `test-backend` | every push/PR | 55 pytest tests on SQLite, same suite on PostgreSQL, migrations from an empty DB |
+| `test-backend` | every push/PR | 57 pytest tests on SQLite, same suite on PostgreSQL, migrations from an empty DB |
 | `test-frontend` | every push/PR | 30 vitest tests + production build |
 | `build-and-push` | pushes to `main`, after tests | Buildx with layer cache → Docker Hub (`latest`, `sha-<7>`, `main`, git tags) |
+| `terraform-plan` | changes under `infra/terraform/` | `fmt` + `init` + `plan` against HCP remote state → diff in the job summary (never applies) |
 
 ```bash
 docker compose pull && docker compose up -d          # deploy what's on main
 # rollback: pin image: alains04/coop-backend:sha-<known-good> and up -d again
 ```
 
-Required secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (access token).
+Required secrets: `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` (access token), and
+for the plan gate `TF_CLOUD_TOKEN`, `TF_TENANCY_OCID`, `TF_USER_OCID`,
+`TF_FINGERPRINT`, `TF_PRIVATE_KEY`, `TF_SSH_PUBLIC_KEY`.
 
 ## Cloud deployment (Terraform + Ansible)
 
@@ -285,8 +304,40 @@ ansible-playbook playbooks/site.yml -v               # harden, swap, Docker, dep
 
 * **Guardrails**: variable validations make it *impossible* to plan a non-free
   shape or a boot volume outside 47–200 GB.
-* **Idempotent**: the playbook re-runs clean (32 ok / 0 changed on a second run).
+* **State & drift**: state lives on HCP Terraform; CI runs `terraform plan` on
+  every change (diff posted to the job summary), so drift is caught early.
+* **Idempotent**: the playbook re-runs clean — a second run reports `0 changed`.
+* **Observability is part of the same playbook** — see
+  [Observability](#observability-prometheus--alerts).
 * Full runbook: [`infra/README.md`](infra/README.md).
+
+## Observability (Prometheus + alerts)
+
+Metrics and alerting without a heavyweight stack: **Prometheus + Alertmanager
+only** — no Grafana, because the memory budget matters on a 1 GB VM.
+
+![Prometheus targets — all green](docs/screenshots/prometheus.png)
+
+* **App instrumentation** — `GET /health` (liveness + DB round-trip) and
+  Prometheus-format `GET /metrics` (request counts/durations per route) in the
+  FastAPI app, via `prometheus-fastapi-instrumentator`; both excluded from the
+  public surface (only reachable on the Docker network).
+* **Four capped containers (~310 MB total)** — `prometheus` (15-day retention,
+  192 MB cap), `alertmanager` (48 MB), `node_exporter` (host CPU/RAM/disk,
+  32 MB), `blackbox_exporter` (32 MB) probing `/health` and the public site.
+* **10 alert rules** in 3 groups — instance pressure (CPU/memory/disk/swap),
+  availability (scrape targets down, TLS expiring, site/backend health) and
+  application SLOs (5xx rate, p95 latency) — validated with `promtool check
+  config` and proven firing in a live email test.
+* **Email alerts** — Alertmanager sends through the *same Gmail app password*
+  configured in the app's Settings page (Fernet-encrypted in the database, set
+  as `OBS_SMTP_PASSWORD` in the Ansible vault). Verified end-to-end with a
+  live firing test: notification delivered, failure counters at zero.
+* **Private by default** — `https://ikimina.duckdns.org/prometheus` and
+  `/alertmanager` sit behind **basic auth**; scraping and alerting run entirely
+  inside the Docker network.
+* Deployed by the `observability` Ansible role — same idempotent playbook as
+  everything else.
 
 ## Project structure
 
@@ -306,9 +357,11 @@ frontend/
   src/content/    KPI explanations shown in dashboard tooltips
   src/context/    toast notifications
 infra/
-  terraform/      OCI free-tier VM + network (+ free-tier guardrails)
-  ansible/        hardening, swap, Docker, stack deploy, DuckDNS, backups
-.github/workflows/backend-ci.yml   tests → Docker Hub images
+  terraform/      OCI free-tier VM + network (HCP remote state, CI plan gate)
+  ansible/        hardening, swap, Docker, stack deploy, DuckDNS, backups,
+                  observability (Prometheus, Alertmanager, probes, alert rules)
+.github/workflows/backend-ci.yml     tests → Docker Hub images
+.github/workflows/terraform-ci.yml   fmt/init/plan gate against HCP state
 ```
 
 ## Security
@@ -329,6 +382,8 @@ infra/
 * Email audit log & month-end statement emails to members.
 * Granular staff roles (teller vs. auditor) beyond the current admin/member split.
 * Offline-tolerant PWA for field officers.
+* Grafana dashboards or longer-term metrics storage if the Prometheus-only view
+  stops being enough.
 * Horizontal scale-out (managed DB + second instance) if membership outgrows
   one VM — the Compose stack moves unchanged.
 
