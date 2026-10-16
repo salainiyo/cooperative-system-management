@@ -1,0 +1,12 @@
+# Managed by Ansible — production site only. (The repo Caddyfile also has a
+# local dev upstream that must never run here.)
+{{ domain }} {
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy cooperative_backend:80
+	}
+
+	handle {
+		reverse_proxy cooperative_frontend:80
+	}
+}

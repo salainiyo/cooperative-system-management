@@ -1,0 +1,23 @@
+---
+# OCI Always Free instances get an ephemeral public IP — DuckDNS must follow it.
+- name: Install the DuckDNS updater (root-only; token embedded)
+  ansible.builtin.template:
+    src: duckdns-update.sh.j2
+    dest: /usr/local/bin/duckdns-update.sh
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Point DuckDNS at this instance right now
+  # Soft: a transient DNS/API hiccup must not fail provisioning — the cron
+  # below retries every 5 minutes anyway.
+  ansible.builtin.command: /usr/local/bin/duckdns-update.sh
+  changed_when: false
+  failed_when: false
+
+- name: Keep DuckDNS in sync every 5 minutes
+  ansible.builtin.cron:
+    name: duckdns update
+    minute: "*/5"
+    user: root
+    job: /usr/local/bin/duckdns-update.sh

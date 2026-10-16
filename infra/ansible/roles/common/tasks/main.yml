@@ -1,0 +1,86 @@
+---
+- name: Update apt cache and apply safe upgrades
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    upgrade: safe
+
+- name: Install base hardening packages
+  ansible.builtin.apt:
+    state: present
+    name:
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - curl
+      - cron
+
+- name: Ensure cron is running (DuckDNS + backups schedule into it)
+  ansible.builtin.systemd:
+    name: cron
+    enabled: true
+    state: started
+
+- name: Read current ufw status
+  ansible.builtin.command: ufw status
+  register: ufw_status
+  changed_when: false
+
+- name: Allow SSH/HTTP/HTTPS and enable ufw
+  # ufw's Ansible module lives in a collection we don't need; the CLI is
+  # idempotent. NOTE: Docker publishes ports through iptables NAT and bypasses
+  # UFW, so the real perimeter is the OCI security list — UFW still covers
+  # host-level services (ssh etc.).
+  ansible.builtin.shell: |
+    set -eu
+    ufw --force default deny incoming
+    ufw --force default allow outgoing
+    for port in 22 80 443; do
+      ufw allow "${port}/tcp" >/dev/null
+    done
+    ufw --force enable
+  # Coarse change detection: rules themselves are idempotent.
+  changed_when: "'Status: active' not in ufw_status.stdout"
+
+- name: Harden sshd via drop-in (keeps us clear of distro defaults)
+  ansible.builtin.template:
+    src: sshd_coop.conf.j2
+    dest: /etc/ssh/sshd_config.d/99-coop.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Validate sshd config
+    - Reload sshd
+
+- name: Enable automatic security upgrades
+  ansible.builtin.template:
+    src: auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: fail2ban jail for sshd
+  ansible.builtin.template:
+    src: fail2ban-jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart fail2ban
+
+- name: Ensure fail2ban is running
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started
+
+- name: Kernel tuning (prefer disk over swap thrash until swapfile is full)
+  ansible.builtin.template:
+    src: sysctl-coop.conf.j2
+    dest: /etc/sysctl.d/99-coop.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Apply sysctl

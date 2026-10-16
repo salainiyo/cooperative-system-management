@@ -1,0 +1,26 @@
+---
+# Daily Postgres dump into a 7-day rolling window (the compose data lives on
+# the boot volume, so backups survive instance rebuilds once copied off-box).
+- name: Create the backup directory (root-only)
+  ansible.builtin.file:
+    path: /var/backups/coop
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the backup script
+  ansible.builtin.template:
+    src: coop-pg-backup.sh.j2
+    dest: /usr/local/bin/coop-pg-backup.sh
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Schedule a daily backup at 03:30
+  ansible.builtin.cron:
+    name: coop postgres backup
+    hour: "3"
+    minute: "30"
+    user: root
+    job: /usr/local/bin/coop-pg-backup.sh

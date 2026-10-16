@@ -1,0 +1,15 @@
+---
+# COPY THIS FILE TO inventory/group_vars/all/vault.yml (gitignored), THEN ENCRYPT IT:
+#   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml   # edit values
+#   ansible-vault encrypt inventory/group_vars/all/vault.yml             # prompt for a password
+# Keep the vault password somewhere safe (password manager); you need it
+# for every playbook run.
+
+# openssl rand -hex 32
+SECRET_KEY: "replace-with-long-random-hex"
+
+# openssl rand -hex 16
+POSTGRES_PASSWORD: "replace-with-random-password"
+
+# https://www.duckdns.org → your domain's token
+DUCKDNS_TOKEN: "replace-with-duckdns-token"

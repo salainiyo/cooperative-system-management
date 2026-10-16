@@ -1,0 +1,39 @@
+# Managed by Ansible — OCI Always Free overrides, merged on top of the repo's
+# docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.oci.yml up -d
+#
+# Rationale (1 GB RAM / 1/8 OCPU instance):
+#   * pinned image tags → reproducible deploys, instant rollback
+#   * Postgres tuned down from defaults (shared_buffers 128MB → 32MB)
+#   * per-container memory caps so one service can't eat the box
+#   * healthchecks so `docker compose ps` shows the real picture
+services:
+  backend:
+    image: {{ backend_image }}:{{ image_tag }}
+    mem_limit: 384m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost/openapi.json', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  frontend:
+    image: {{ frontend_image }}:{{ image_tag }}
+
+  postgres:
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - max_connections=40
+    mem_limit: 384m
+
+  caddy:
+    mem_limit: 128m
+
+  redis:
+    mem_limit: 64m

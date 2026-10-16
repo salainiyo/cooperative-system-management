@@ -17,7 +17,8 @@ JWT auth with RBAC, Fernet-encrypted secrets, pytest.
 Vitest + React Testing Library.
 
 **Infrastructure** — Docker Compose, Caddy (HTTPS + `/api` reverse proxy), GitHub Actions CI
-(backend pytest **and** frontend vitest/build on every push/PR).
+(backend pytest **and** frontend vitest/build on every push/PR), Terraform + Ansible
+deployment to Oracle Cloud Always Free.
 
 ## Key features
 
@@ -189,6 +190,26 @@ docker compose pull && docker compose up -d          # deploy what's on main
 #   image: alains04/coop-backend:sha-1234567
 docker compose up -d
 ```
+
+## Deploying to Oracle Cloud (Always Free)
+
+`infra/` contains a `$0/month` single-instance deployment (one AMD micro
+1/8 OCPU · 1 GB RAM, free-tier guardrails enforced as Terraform validations):
+
+```bash
+# 1. OCI API key + values → infra/terraform/README.md (Phase 0)
+cd infra/terraform && cp terraform.tfvars.example terraform.tfvars   # edit
+terraform init && terraform plan && terraform apply
+
+# 2. Secrets (gitignored) → infra/ansible/group_vars/vault.yml.example
+cd ../ansible && cp group_vars/vault.yml.example group_vars/vault.yml  # edit
+ansible-vault encrypt group_vars/vault.yml
+
+# 3. Harden + deploy (ufw, swap, Docker, stack, DuckDNS, backups)
+ansible-playbook playbooks/site.yml -v
+```
+
+Full runbook, verification and day-2 operations: [`infra/README.md`](infra/README.md).
 
 ## Project structure
 

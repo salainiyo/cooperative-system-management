@@ -1,0 +1,17 @@
+#!/bin/sh
+# Managed by Ansible — one dump per day, pruned after {{ backup_keep_days }} days.
+# Also run ad-hoc: /usr/local/bin/coop-pg-backup.sh
+set -eu
+
+stamp=$(date +%F)
+out="/var/backups/coop/coop-${stamp}.sql.gz"
+
+if [ -f "$out" ]; then
+  exit 0
+fi
+
+docker exec cooperative_postgres pg_dump -U coop coop | gzip > "${out}.tmp"
+mv "${out}.tmp" "$out"
+chmod 0600 "$out"
+
+find /var/backups/coop -name 'coop-*.sql.gz' -mtime +{{ backup_keep_days }} -delete

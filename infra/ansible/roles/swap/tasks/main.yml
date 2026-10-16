@@ -1,0 +1,32 @@
+---
+# The Always Free AMD micro has 1 GB RAM; 2 GB of swap keeps the 5 containers
+# (+ Postgres) from OOM-killing under a burst.
+- name: Check whether swap is already active
+  ansible.builtin.command: swapon --show=NAME --noheadings
+  register: swap_active
+  changed_when: false
+
+- name: Create and enable the swapfile
+  when: swap_active.stdout == ""
+  block:
+    - name: Allocate swapfile
+      ansible.builtin.command: "fallocate -l {{ swap_mb }}M /swapfile"
+
+    - name: Lock down swapfile permissions
+      ansible.builtin.command: chmod 0600 /swapfile
+      changed_when: true
+
+    - name: Format the swapfile
+      ansible.builtin.command: mkswap /swapfile
+      changed_when: true
+
+    - name: Activate the swapfile
+      ansible.builtin.command: swapon /swapfile
+      changed_when: true
+
+    - name: Persist swap in fstab
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        line: "/swapfile none swap sw 0 0"
+        regexp: "^/swapfile"
+        state: present

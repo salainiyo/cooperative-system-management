@@ -1,0 +1,18 @@
+---
+# Non-secret settings for every host.
+domain: ikimina.duckdns.org
+duckdns_subdomain: ikimina
+
+# Where the stack lives on the instance.
+compose_dir: /srv/coop
+
+# Images (public on Docker Hub — no login required).
+backend_image: alains04/coop-backend
+frontend_image: alains04/coop-frontend
+# Pin to a CI tag (e.g. "sha-2bbdab7") for reproducible deploys + instant
+# rollback; "latest" always tracks main.
+image_tag: latest
+
+# First-boot sizing / housekeeping.
+swap_mb: 2048
+backup_keep_days: 7

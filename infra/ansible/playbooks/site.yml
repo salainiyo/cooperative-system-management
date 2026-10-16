@@ -1,0 +1,20 @@
+---
+# Deploy the cooperative stack to the OCI Always Free instance.
+#
+#   ansible-playbook playbooks/site.yml -v
+#   (prompts for the ansible-vault password protecting inventory/group_vars/all/vault.yml)
+#
+# Idempotent: re-run any time. First run hardens the box + starts the stack;
+# later runs just reconcile config and images.
+- name: Deploy Ikimina cooperative stack to the OCI free instance
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - common   # apt, ufw, fail2ban, sshd hardening, unattended upgrades, sysctl
+    - swap     # 2 GB swapfile (the 1 GB micro's safety margin)
+    - docker   # docker.io + compose v2, log rotation
+    - deploy   # render /srv/coop, pull public images, up -d, health gates
+    - duckdns  # keep ikimina.duckdns.org pointed at this instance
+    - backup   # daily pg_dump with 7-day rotation

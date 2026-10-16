@@ -1,0 +1,5 @@
+#!/bin/sh
+# Managed by Ansible — publishes this instance's current public IP for
+# {{ domain }}. DuckDNS resolves the caller's IP when `ip=` is empty.
+set -eu
+curl -fsS "https://www.duckdns.org/update?domains={{ duckdns_subdomain }}&token={{ DUCKDNS_TOKEN }}&ip=" >/dev/null

@@ -17,3 +17,16 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.pyc
+
+# Terraform (state, provider dir and real tfvars stay local — secrets!)
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfvars
+!infra/terraform/*.tfvars.example
+infra/terraform/crash.log
+
+# Ansible (generated inventory + vault-encrypted secrets)
+infra/ansible/inventory/hosts.yml
+infra/ansible/inventory/group_vars/all/vault.yml
+infra/ansible/*vault-password*

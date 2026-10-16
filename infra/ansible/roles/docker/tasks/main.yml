@@ -1,0 +1,35 @@
+---
+# Docker from Ubuntu's own archives (no third-party repo needed) — the
+# images are prebuilt in CI, the server only pulls and runs them.
+- name: Install Docker engine and Compose v2
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+    state: present
+    name:
+      - docker.io
+      - docker-compose-v2
+
+- name: Configure the Docker daemon (log rotation protects the 50 GB disk)
+  ansible.builtin.template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Docker
+
+- name: Apply daemon config now (before any containers exist)
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure Docker is enabled and running
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Let the ssh user manage Docker without sudo
+  ansible.builtin.user:
+    name: "{{ ansible_user | default('ubuntu') }}"
+    groups: docker
+    append: true

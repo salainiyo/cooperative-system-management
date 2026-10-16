@@ -1,0 +1,10 @@
+# Managed by Ansible — site sshd policy (drop-in overrides distro defaults).
+# The instance is key-only by design; OCI metadata already installed our key.
+PasswordAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+MaxAuthTries 3
+LoginGraceTime 30
+X11Forwarding no
+ClientAliveInterval 300
+ClientAliveCountMax 2

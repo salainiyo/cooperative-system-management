@@ -1,0 +1,101 @@
+---
+# Renders /srv/coop/{.env,Caddyfile,docker-compose.yml,docker-compose.oci.yml},
+# pulls the public images and brings the stack up. Re-running reconciles
+# everything (compose recreates containers whose config changed).
+- name: Create the project directory
+  ansible.builtin.file:
+    path: "{{ compose_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Render .env (secrets come from the vault)
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ compose_dir }}/.env"
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Render Caddyfile (ikimina site only — the repo copy also carries a
+    local dev site that must not ship)
+  ansible.builtin.template:
+    src: Caddyfile.j2
+    dest: "{{ compose_dir }}/Caddyfile"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Render compose overrides (image pin, memory caps, healthchecks)
+  ansible.builtin.template:
+    src: docker-compose.oci.yml.j2
+    dest: "{{ compose_dir }}/docker-compose.oci.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Copy the repo compose file (single source of truth)
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../docker-compose.yml"
+    dest: "{{ compose_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Pull images (public — anonymous pull, no registry login)
+  ansible.builtin.command: docker compose -f docker-compose.yml -f docker-compose.oci.yml pull
+  args:
+    chdir: "{{ compose_dir }}"
+  changed_when: false
+
+- name: Start / reconcile the stack
+  ansible.builtin.command: docker compose -f docker-compose.yml -f docker-compose.oci.yml up -d --remove-orphans
+  args:
+    chdir: "{{ compose_dir }}"
+  register: compose_up
+  changed_when: >
+    ('Started' in compose_up.stderr) or ('Created' in compose_up.stderr)
+    or ('Recreated' in compose_up.stderr) or ('Removed' in compose_up.stderr)
+    or ('An error occurred' in compose_up.stderr and compose_up.rc != 0)
+
+- name: Wait for PostgreSQL to report healthy
+  ansible.builtin.command: docker inspect --format="{% raw %}{{.State.Health.Status}}{% endraw %}" cooperative_postgres
+  register: pg_health
+  until: pg_health.stdout == "healthy"
+  retries: 15
+  delay: 4
+  changed_when: false
+
+- name: Verify every container is running
+  ansible.builtin.shell: |
+    set -eu
+    for c in caddy_proxy cooperative_postgres cooperative_backend \
+             cooperative_frontend cooperative_redis; do
+      running=$(docker inspect --format '{% raw %}{{.State.Running}}{% endraw %}' "$c")
+      if [ "$running" != "true" ]; then
+        echo "NOT RUNNING: $c"
+        exit 1
+      fi
+    done
+    echo "all five containers running"
+  register: containers_check
+  changed_when: false
+
+- name: Probe the API through Caddy (Host header over plain HTTP)
+  # Soft gate: full HTTPS verification happens in the runbook right after
+  # DuckDNS points here and Caddy obtains the Let's Encrypt certificate.
+  ansible.builtin.uri:
+    url: "http://127.0.0.1/api/openapi.json"
+    headers:
+      Host: "{{ domain }}"
+    status_code:
+      - 200
+      - 301
+      - 308
+    follow_redirects: none
+  register: api_probe
+  retries: 6
+  delay: 5
+  until: api_probe.status | default(0) in [200, 301, 308]
+  ignore_errors: true

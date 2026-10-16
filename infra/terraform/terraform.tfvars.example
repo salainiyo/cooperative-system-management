@@ -1,0 +1,17 @@
+# Copy to `terraform.tfvars` (gitignored) and fill in real values.
+# How to collect these: README.md → Phase 0.
+
+tenancy_ocid       = "ocid1.tenancy.oc1..aaaaaaaa..."     # Administration → Tenancy details
+user_ocid          = "ocid1.user.oc1..aaaaaaaa..."        # Identity → Users → your user
+fingerprint        = "xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx"
+private_key_path   = "~/.oci/oci_api_key.pem"
+region             = "us-ashburn-1"                       # pick an Always Free-eligible region
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
+# Optional (defaults shown):
+# compartment_ocid          = ""          # "" = root (tenancy) compartment
+# instance_shape            = "VM.Standard.E2.1.Micro"   # Always Free only — do not change
+# boot_volume_size_in_gbs   = 50          # <= 200 GB total Always Free
+# vcn_cidr                  = "10.0.0.0/16"
+# subnet_cidr               = "10.0.1.0/24"
+# instance_display_name     = "coop-free-vm"
