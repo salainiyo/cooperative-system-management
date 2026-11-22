@@ -39,7 +39,7 @@ jobs:
       TF_VAR_availability_domain_name: "UzBZ:UK-LONDON-1-AD-3"
       # Recorded as a string in the generated Ansible inventory (never opened
       # by Terraform) — must match terraform.tfvars or the local_file diffs.
-      TF_VAR_ssh_private_key_path: "/home/alain/.ssh/id_ed25519"
+      TF_VAR_ssh_private_key_path: "~/.ssh/id_ed25519"
 
     steps:
       - name: Check out the repo
